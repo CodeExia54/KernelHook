@@ -5,13 +5,15 @@
 
 #include <linux/init.h>
 #include <linux/module.h>
-#include <linux/types.h>
+#include <stdint.h>
 
+/* Use uint16_t (project's core typedefs in include/types.h) rather than the
+ * kernel-only `u16` alias — the freestanding shim does not provide it. */
 struct kh_consumer_entry {
-    int  (*init)(void);     /* required */
-    void (*exit)(void);     /* may be NULL */
-    u16   priority;         /* lower runs first; default 500 */
-    const char *name;       /* for log */
+    int       (*init)(void);  /* required */
+    void      (*exit)(void);  /* may be NULL */
+    uint16_t   priority;      /* lower runs first; default 500 */
+    const char *name;         /* for log */
 };
 
 #define KH_PRIO_SUBSYS  100

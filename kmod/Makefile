@@ -10,6 +10,25 @@ MODULE_NAME  := kernelhook
 MODULE_SRCS  := src/main.c
 KERNELHOOK_DIR := $(shell pwd)
 
+# --- Fat-link mode (KH_FAT_LINK=1) ---
+# Pulls in fat_main.c (master init walking .kh_consumer_table) plus the
+# consumer objects selected by KH_MODULES (comma-separated). Each selected
+# consumer's source is appended to MODULE_SRCS so mk/kmod.mk picks it up.
+#
+# Example: make module KH_FAT_LINK=1 KH_MODULES=khm,apd,supercall
+#
+# Supported consumers in this revision: khm (apd/supercall land in 5.1/5.2).
+comma := ,
+ifdef KH_FAT_LINK
+  EXTRA_CFLAGS += -DKH_FAT_LINK=1
+  MODULE_SRCS += src/fat_main.c
+
+  ifneq ($(filter khm,$(subst $(comma), ,$(KH_MODULES))),)
+    EXTRA_CFLAGS += -DKH_HAVE_KHM=1
+    MODULE_SRCS += consumers/khm/khm_main.c
+  endif
+endif
+
 include mk/kmod.mk
 
 # ---------- Multi-layout build ----------

@@ -52,12 +52,16 @@ ccflags-y := \
     -Wno-gcc-compat
 
 # --- Fat-link mode (KH_FAT_LINK=1) ---
-# When building fat.ko (with consumers static-linked), include fat_main.o
-# and define KH_FAT_LINK so kh_consumer_register macros emit section table
-# entries instead of standalone module_init/exit.
+# Provided here so a kbuild-driven build (against /lib/modules/.../build)
+# also picks up fat_main + consumers. Note: the project's primary build
+# path goes through kmod/Makefile + mk/kmod.mk which uses MODULE_SRCS, NOT
+# kernelhook-y from this file. The freestanding-path equivalent of these
+# additions lives in kmod/Makefile under the matching `ifdef KH_FAT_LINK`.
 #
 # KH_MODULES is a comma-separated list of consumers to compile in.
-# Example: make module KH_FAT_LINK=1 KH_MODULES=khm,apd,supercall
+# Example (kbuild path):
+#   make -C /lib/modules/$(uname -r)/build M=$(pwd) modules \
+#       KH_FAT_LINK=1 KH_MODULES=khm,apd,supercall
 comma := ,
 ifdef KH_FAT_LINK
   ccflags-y += -DKH_FAT_LINK=1
