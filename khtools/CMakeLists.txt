@@ -3,6 +3,7 @@ add_executable(khtools
     src/main.c
     src/cmd_probe.c
     src/cmd_dump_syms.c
+    src/probe_image.c
     src/kallsym.c
     src/order.c
     src/insn.c
@@ -39,4 +40,22 @@ if(NOT ANDROID AND CMAKE_BUILD_TYPE STREQUAL "Debug")
         "-Wno-unused-parameter")
     add_test(NAME khtools_kallsym_pixel35 COMMAND test_kallsym_pixel35)
     set_tests_properties(khtools_kallsym_pixel35 PROPERTIES SKIP_RETURN_CODE 77)
+
+    add_executable(test_probe_pixel31
+        tests/test_probe_pixel31.c
+        src/probe_image.c
+        src/kallsym.c
+        src/order.c
+        src/insn.c
+        src/common.c
+    )
+    target_include_directories(test_probe_pixel31 PRIVATE src)
+    target_link_libraries(test_probe_pixel31 PRIVATE kh_strategies z)
+    # Suppress the same ported-code warnings in the duplicate compile units
+    set_source_files_properties(src/kallsym.c PROPERTIES COMPILE_FLAGS
+        "-Wno-unused-variable -Wno-unused-parameter -Wno-unused-function")
+    set_source_files_properties(src/insn.c PROPERTIES COMPILE_FLAGS
+        "-Wno-unused-parameter")
+    add_test(NAME khtools_probe_pixel31 COMMAND test_probe_pixel31)
+    set_tests_properties(khtools_probe_pixel31 PROPERTIES SKIP_RETURN_CODE 77)
 endif()

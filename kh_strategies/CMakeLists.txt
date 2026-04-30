@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 add_library(kh_strategies STATIC
     src/variant_name.c
+    src/probe_image.c
     # The probe_*.c / cli.c / config.c files migrated from tools/kmod_loader
     # are KMOD_FREESTANDING-only and reference resolver.h / devices_table.h
     # which live in tools/kmod_loader. They are built via tools/kmod_loader/
