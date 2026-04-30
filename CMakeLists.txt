@@ -50,6 +50,8 @@ set(LIB_SOURCES
 
 add_library(kernelhook STATIC ${LIB_SOURCES})
 
+add_subdirectory(kh_strategies)
+
 target_include_directories(kernelhook PUBLIC
     include
     include/arch/arm64
