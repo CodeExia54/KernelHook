@@ -5,6 +5,7 @@ add_executable(khtools
     src/cmd_dump_syms.c
     src/cmd_extract.c
     src/cmd_patch.c
+    src/cmd_verify.c
     src/embed_blob.c
     src/sha256.c
     src/file_io.c
@@ -93,4 +94,8 @@ if(NOT ANDROID AND CMAKE_BUILD_TYPE STREQUAL "Debug")
     add_test(NAME khtools_patch_smoke
              COMMAND ${CMAKE_SOURCE_DIR}/khtools/tests/test_patch_smoke.sh)
     set_tests_properties(khtools_patch_smoke PROPERTIES SKIP_RETURN_CODE 77)
+
+    add_test(NAME khtools_verify_smoke
+             COMMAND ${CMAKE_SOURCE_DIR}/khtools/tests/test_verify_smoke.sh)
+    set_tests_properties(khtools_verify_smoke PROPERTIES SKIP_RETURN_CODE 77)
 endif()
