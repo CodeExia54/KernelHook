@@ -50,3 +50,12 @@ ccflags-y := \
     -Wno-declaration-after-statement \
     -Wno-unknown-sanitizers \
     -Wno-gcc-compat
+
+# --- Fat-link mode (KH_FAT_LINK=1) ---
+# When building fat.ko (with consumers static-linked), include fat_main.o
+# and define KH_FAT_LINK so kh_consumer_register macros emit section table
+# entries instead of standalone module_init/exit.
+ifdef KH_FAT_LINK
+  ccflags-y += -DKH_FAT_LINK=1
+  kernelhook-y += src/fat_main.o
+endif

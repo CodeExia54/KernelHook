@@ -22,7 +22,7 @@
 #include "compat.h"
 #include "mem_ops.h"
 
-#ifndef KH_PAYLOAD
+#if !defined(KH_PAYLOAD) && !defined(KH_FAT_LINK)
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("bmax121");
 MODULE_DESCRIPTION("KernelHook: ARM64 function hooking framework");
@@ -61,7 +61,7 @@ static int kh_initialized = 0;
 
 /* Non-static so KH_PAYLOAD mode can alias `kh_entry` to it. `__attribute__((alias))`
  * requires the target to have external linkage. */
-#ifdef KH_PAYLOAD
+#if defined(KH_PAYLOAD) || defined(KH_FAT_LINK)
 int __init kernelhook_init(void)
 #else
 static int __init kernelhook_init(void)
@@ -148,7 +148,7 @@ static int __init kernelhook_init(void)
  * their hooks before kernelhook.ko is unloaded. This module does not
  * track or teardown hooks registered by other modules.
  */
-#ifdef KH_PAYLOAD
+#if defined(KH_PAYLOAD) || defined(KH_FAT_LINK)
 void __exit kernelhook_exit(void)
 #else
 static void __exit kernelhook_exit(void)
@@ -170,6 +170,9 @@ static void __exit kernelhook_exit(void)
  * matches kh_entry's `int (*)(void)` prototype). */
 int  kh_entry(void) __attribute__((alias("kernelhook_init")));
 void kh_exit(void)  __attribute__((alias("kernelhook_exit")));
+#elif defined(KH_FAT_LINK)
+/* Under KH_FAT_LINK, fat_main.c owns module_init/exit and calls
+ * kernelhook_init/kernelhook_exit explicitly. Don't register here. */
 #else
 module_init(kernelhook_init);
 module_exit(kernelhook_exit);
