@@ -8,10 +8,17 @@
 #include <stdint.h>
 
 /* Use uint16_t (project's core typedefs in include/types.h) rather than the
- * kernel-only `u16` alias — the freestanding shim does not provide it. */
+ * kernel-only `u16` alias — the freestanding shim does not provide it.
+ *
+ * NULL-exit caveat: the .exit field is allowed to be NULL only in the
+ * fat-link build mode (kh_consumer_register expands to a section table
+ * entry; fat_main.c null-checks before calling). In the standalone build
+ * mode the macro expands to module_exit(exit_fn) which does NOT tolerate
+ * a NULL pointer — every standalone-mode consumer must supply a real
+ * exit function. */
 struct kh_consumer_entry {
     int       (*init)(void);  /* required */
-    void      (*exit)(void);  /* may be NULL */
+    void      (*exit)(void);  /* may be NULL only in fat-link mode */
     uint16_t   priority;      /* lower runs first; default 500 */
     const char *name;         /* for log */
 };

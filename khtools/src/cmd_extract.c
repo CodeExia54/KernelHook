@@ -5,6 +5,12 @@
  *
  * Requires `magiskboot` in PATH. Acceptable for dev workflow; CI / release
  * pipelines should pin a magiskboot binary in fixtures.
+ *
+ * Path-quoting note: --boot and --out paths are wrapped in single quotes
+ * for system() invocation. Paths containing a literal single quote will
+ * break the command line. Same caveat as cmd_patch.c / cmd_verify.c —
+ * acceptable for pipeline-controlled inputs; a posix_spawn(argv) refactor
+ * is future work.
  */
 #include <stdio.h>
 #include <stdlib.h>

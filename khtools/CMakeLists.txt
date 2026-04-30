@@ -27,7 +27,7 @@ if(KH_HAS_ELF_H)
     target_compile_definitions(khtools PRIVATE KH_HAS_ELF_H=1)
 endif()
 target_link_libraries(khtools PRIVATE kh_strategies z)
-target_include_directories(khtools PRIVATE src)
+target_include_directories(khtools PRIVATE src ${CMAKE_SOURCE_DIR}/include)
 target_compile_options(khtools PRIVATE -Wall -Wextra -Werror)
 # kallsym.c is ported verbatim from KernelPatch; it has unused variables, params,
 # and static helper functions that belong to its internal callback API.

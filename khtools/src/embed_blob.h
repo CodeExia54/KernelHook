@@ -6,20 +6,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* On-disk trailer block layout. khimg's kh_load.c parses this same
- * struct; keep the layout in sync. */
-struct kh_blob_table_v1 {
-    uint32_t magic;        /* 'K' 'H' 'B' 'L' little-endian = 0x4C42484B */
-    uint32_t version;      /* 1 */
-    uint32_t fat_off;      /* offset of fat.ko bytes from blob start */
-    uint32_t fat_len;
-    uint32_t ksu_off;      /* 0 if no KSU */
-    uint32_t ksu_len;
-    uint8_t  fat_sha256[32];
-    uint8_t  ksu_sha256[32];
-};
-
-#define KHBL_MAGIC 0x4C42484Bu
+/* On-disk trailer layout pulled from the shared header so producers
+ * (this file's kh_make_blob) and consumers (cmd_verify, cmd_list,
+ * khimg/src/kh_load.c) agree on every byte without duplication. */
+#include "kernelhook/kh_blob_table.h"
 
 /* Concatenate kh_blob_table + fat.ko bytes (+ optional ksu.ko) into a
  * blob suitable for appending to a kernel section. Caller frees *out. */

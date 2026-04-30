@@ -10,18 +10,9 @@
 #include <ktypes.h>
 #include <compiler.h>
 
-struct kh_blob_table_v1 {
-    uint32_t magic;         /* 'KHBL' = 0x4C42484B little-endian */
-    uint32_t version;       /* 1 */
-    uint32_t fat_off;       /* offset of fat.ko bytes from blob start */
-    uint32_t fat_len;
-    uint32_t ksu_off;       /* 0 if no KSU */
-    uint32_t ksu_len;
-    uint8_t  fat_sha256[32];
-    uint8_t  ksu_sha256[32];
-};
-
-#define KHBL_MAGIC 0x4C42484Bu   /* 'KHBL' */
+/* Shared trailer layout — single source of truth so khtools' producer
+ * (embed_blob.c) and khimg's consumer agree on every byte. */
+#include "kernelhook/kh_blob_table.h"
 
 /*
  * khimg_main — called from start.c with the kimage/linear offsets and the
