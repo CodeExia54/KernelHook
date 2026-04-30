@@ -6,6 +6,7 @@ add_executable(khtools
     src/cmd_extract.c
     src/cmd_patch.c
     src/cmd_verify.c
+    src/cmd_list.c
     src/embed_blob.c
     src/sha256.c
     src/file_io.c

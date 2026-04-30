@@ -33,6 +33,7 @@ int main(int argc, char **argv) {
     if (!strcmp(cmd, "patch"))   return cmd_patch(argc - 1, argv + 1);
     if (!strcmp(cmd, "extract")) return cmd_extract(argc - 1, argv + 1);
     if (!strcmp(cmd, "verify"))  return cmd_verify(argc - 1, argv + 1);
+    if (!strcmp(cmd, "list"))    return cmd_list(argc - 1, argv + 1);
     fprintf(stderr, "khtools: unknown subcommand '%s'\n", cmd);
     usage();
     return 1;
