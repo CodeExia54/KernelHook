@@ -17,7 +17,8 @@ KERNELHOOK_DIR := $(shell pwd)
 #
 # Example: make module KH_FAT_LINK=1 KH_MODULES=khm,apd,supercall
 #
-# Supported consumers in this revision: khm (apd/supercall land in 5.1/5.2).
+# Supported consumers: khm, apd, supercall (skeletons; full impl lands
+# in Phase 5b / C subspec).
 comma := ,
 ifdef KH_FAT_LINK
   EXTRA_CFLAGS += -DKH_FAT_LINK=1
@@ -26,6 +27,14 @@ ifdef KH_FAT_LINK
   ifneq ($(filter khm,$(subst $(comma), ,$(KH_MODULES))),)
     EXTRA_CFLAGS += -DKH_HAVE_KHM=1
     MODULE_SRCS += consumers/khm/khm_main.c
+  endif
+  ifneq ($(filter apd,$(subst $(comma), ,$(KH_MODULES))),)
+    EXTRA_CFLAGS += -DKH_HAVE_APD=1
+    MODULE_SRCS += consumers/apd/apd_main.c
+  endif
+  ifneq ($(filter supercall,$(subst $(comma), ,$(KH_MODULES))),)
+    EXTRA_CFLAGS += -DKH_HAVE_SUPERCALL=1
+    MODULE_SRCS += consumers/supercall/sc_main.c
   endif
 endif
 

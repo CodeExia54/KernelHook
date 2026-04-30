@@ -71,4 +71,12 @@ ifdef KH_FAT_LINK
     ccflags-y += -DKH_HAVE_KHM=1
     kernelhook-y += consumers/khm/khm_main.o
   endif
+  ifneq ($(filter apd,$(subst $(comma), ,$(KH_MODULES))),)
+    ccflags-y += -DKH_HAVE_APD=1
+    kernelhook-y += consumers/apd/apd_main.o
+  endif
+  ifneq ($(filter supercall,$(subst $(comma), ,$(KH_MODULES))),)
+    ccflags-y += -DKH_HAVE_SUPERCALL=1
+    kernelhook-y += consumers/supercall/sc_main.o
+  endif
 endif
