@@ -139,11 +139,14 @@ int main(int argc, char **argv) {
     if (ksu_path) {
         int sysfs_fd = open("/sys/kernel/kh/pending_ksu", O_WRONLY);
         if (sysfs_fd < 0) {
+            /* fat.ko loaded but the user-requested KSU injection cannot be
+             * honored. Return 7 so callers don't assume KSU was injected.
+             * fat.ko itself remains loaded (no rollback). */
             fprintf(stderr,
                     "kh: insmod: cannot open /sys/kernel/kh/pending_ksu (%s); "
-                    "fat.ko loaded but KSU injection skipped\n",
+                    "fat.ko loaded but --ksu request was NOT honored\n",
                     strerror(errno));
-            /* fat.ko itself loaded — return 0 with a warning. */
+            return 7;
         } else {
             int ksu_fd = open(ksu_path, O_RDONLY);
             if (ksu_fd < 0) {
