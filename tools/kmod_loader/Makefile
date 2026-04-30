@@ -64,8 +64,8 @@ all: kmod_loader kmod_loader_dyn graft_vendor_ko
 # the same ELF-manipulation style as kmod_loader and consumes the same
 # KernelHook payload object.  Requires <elf.h> — Linux or Android NDK
 # host only.  macOS developers can build/run via docker.
-graft_vendor_ko: graft_vendor_ko.c
-	$(HOSTCC) -O2 -Wall -Wextra -Werror -o $@ $<
+graft_vendor_ko: $(KH_ROOT)/khtools/src/graft.c
+	$(HOSTCC) -O2 -Wall -Wextra -Werror -DKH_GRAFT_STANDALONE -o $@ $<
 
 graft: graft_vendor_ko
 	@echo "graft_vendor_ko built.  Usage: ./graft_vendor_ko --help"

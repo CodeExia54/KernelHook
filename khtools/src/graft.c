@@ -413,12 +413,41 @@ static void usage(void)
     exit(2);
 }
 
-/* Forward declaration of the core merger (defined in a follow-up patch). */
-static int graft(const uint8_t *host, size_t host_size,
-                 const uint8_t *payload, size_t payload_size,
-                 uint64_t kallsyms_addr, int have_kallsyms_addr,
-                 uint8_t **out_buf, size_t *out_size);
+/* Forward declaration of the core merger. */
+int kh_graft_compose(const uint8_t *host, size_t host_size,
+                     const uint8_t *payload, size_t payload_size,
+                     uint64_t kallsyms_addr, int have_kallsyms_addr,
+                     uint8_t **out_buf, size_t *out_size);
 
+int kh_graft_in_place(uint8_t **ko_buf, size_t *ko_len, const char *host_path)
+{
+    if (!ko_buf || !*ko_buf || !ko_len || !host_path) return -1;
+
+    size_t host_size = 0;
+    uint8_t *host = read_file(host_path, &host_size);
+    /* read_file calls die() on failure — never reach here with a failed read.
+     * Acceptable for the standalone CLI path; non-fatal failure can be added
+     * later if lib callers need it. */
+
+    size_t host_body = strip_module_sig(host, host_size);
+    elf_validate(host, host_body, "host");
+    elf_validate(*ko_buf, *ko_len, "payload");
+
+    uint8_t *out = NULL;
+    size_t out_size = 0;
+    int rc = kh_graft_compose(host, host_body, *ko_buf, *ko_len,
+                              0, 0,  /* kallsyms_addr — not provided in this path */
+                              &out, &out_size);
+    free(host);
+    if (rc != 0) return rc;
+
+    free(*ko_buf);
+    *ko_buf = out;
+    *ko_len = out_size;
+    return 0;
+}
+
+#ifdef KH_GRAFT_STANDALONE
 int main(int argc, char **argv)
 {
     const char *host_path = NULL, *payload_path = NULL, *out_path = NULL;
@@ -462,8 +491,8 @@ int main(int argc, char **argv)
 
     uint8_t *out_buf = NULL;
     size_t   out_size = 0;
-    int rc = graft(host, host_body_size, payload, payload_size,
-                   kallsyms_addr, have_kallsyms_addr, &out_buf, &out_size);
+    int rc = kh_graft_compose(host, host_body_size, payload, payload_size,
+                              kallsyms_addr, have_kallsyms_addr, &out_buf, &out_size);
     if (rc != 0) die("graft failed (rc=%d)", rc);
 
     write_file(out_path, out_buf, out_size);
@@ -474,6 +503,7 @@ int main(int argc, char **argv)
     free(payload);
     return 0;
 }
+#endif /* KH_GRAFT_STANDALONE */
 
 /* ---------------------------------------------------------------------- */
 /*  Core merger                                                           */
@@ -510,10 +540,10 @@ static size_t align_up(size_t x, size_t a)
  * index) are untouched because their symbol indices are still valid in the
  * merged symtab (the merge appends; it does not reorder).
  */
-static int graft(const uint8_t *host, size_t host_size,
-                 const uint8_t *payload, size_t payload_size,
-                 uint64_t kallsyms_addr, int have_kallsyms_addr,
-                 uint8_t **out_buf, size_t *out_size)
+int kh_graft_compose(const uint8_t *host, size_t host_size,
+                     const uint8_t *payload, size_t payload_size,
+                     uint64_t kallsyms_addr, int have_kallsyms_addr,
+                     uint8_t **out_buf, size_t *out_size)
 {
     const Ehdr *h_eh = (const Ehdr *)host;
     const Ehdr *p_eh = (const Ehdr *)payload;

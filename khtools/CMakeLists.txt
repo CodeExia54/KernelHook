@@ -14,7 +14,10 @@ add_executable(khtools
 # cmd_finalize.c includes <elf.h> and calls kh_patch_* — only available when
 # elf.h is present (Linux/Android NDK targets; excluded on macOS CMake builds).
 if(KH_HAS_ELF_H)
-    target_sources(khtools PRIVATE src/cmd_finalize.c)
+    target_sources(khtools PRIVATE
+        src/cmd_finalize.c
+        src/graft.c
+    )
     target_compile_definitions(khtools PRIVATE KH_HAS_ELF_H=1)
 endif()
 target_link_libraries(khtools PRIVATE kh_strategies z)

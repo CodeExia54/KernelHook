@@ -8,6 +8,7 @@
 #include "cmd_dispatch.h"
 #include "file_io.h"
 #include "finalize_glue.h"
+#include "graft.h"
 #include "kh_strategies/finalize.h"
 
 /* Callbacks bridging kh_strategies into our offline ctx. */
@@ -108,10 +109,10 @@ int cmd_finalize(int argc, char **argv) {
     kh_patch_printk_symbol(ko, eh, &cb);
 
     if (plan.need_graft) {
-        fprintf(stderr,
-                "kh: finalize: graft path required but not yet implemented "
-                "(Task 2.4)\n");
-        kh_finalize_ctx_free(&ctx); free(image); free(ko); return 4;
+        if (kh_graft_in_place(&ko, &ko_len, graft_p) != 0) {
+            fprintf(stderr, "kh: finalize: graft failed\n");
+            kh_finalize_ctx_free(&ctx); free(image); free(ko); return 4;
+        }
     }
 
     if (kh_write_file(out_p, ko, ko_len) < 0) {
