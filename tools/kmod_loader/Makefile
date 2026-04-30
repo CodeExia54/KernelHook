@@ -70,6 +70,13 @@ graft_vendor_ko: graft_vendor_ko.c
 graft: graft_vendor_ko
 	@echo "graft_vendor_ko built.  Usage: ./graft_vendor_ko --help"
 
+FINALIZE_SRCS := $(KH_ROOT)/kh_strategies/src/finalize_kcfi.c \
+                 $(KH_ROOT)/kh_strategies/src/finalize_versions.c \
+                 $(KH_ROOT)/kh_strategies/src/finalize_vermagic.c \
+                 $(KH_ROOT)/kh_strategies/src/finalize_layout.c \
+                 $(KH_ROOT)/kh_strategies/src/finalize_printk.c \
+                 $(KH_ROOT)/kh_strategies/src/finalize_misc.c
+
 RESOLVER_SRCS := resolver.c \
                  $(KH_ROOT)/kh_strategies/src/cli.c \
                  $(KH_ROOT)/kh_strategies/src/probe_procfs.c \
@@ -83,14 +90,17 @@ SUBCOMMAND_SRCS := subcommands.c
 
 RESOLVER_HDRS := resolver.h devices_table.h subcommands.h
 
-# Include path so migrated kh_strategies/src/*.c can find resolver.h and devices_table.h.
-RESOLVER_IFLAGS := -I$(KH_ROOT)/tools/kmod_loader -I$(KH_ROOT)/kh_strategies/include
+# Include path so migrated kh_strategies/src/*.c can find resolver.h, devices_table.h,
+# and internal helpers (elf_helpers.h in kh_strategies/src/).
+RESOLVER_IFLAGS := -I$(KH_ROOT)/tools/kmod_loader \
+                   -I$(KH_ROOT)/kh_strategies/include \
+                   -I$(KH_ROOT)/kh_strategies/src
 
 kmod_loader: kmod_loader.c probe_embed.h $(DEVICES_TABLE_C) $(DEVICES_TABLE_H) \
-             $(RESOLVER_SRCS) $(SUBCOMMAND_SRCS) $(RESOLVER_HDRS)
+             $(FINALIZE_SRCS) $(RESOLVER_SRCS) $(SUBCOMMAND_SRCS) $(RESOLVER_HDRS)
 	$(LOADER_CC) -DEMBED_PROBE_KO -DKH_RESOLVER_DEFINE_SPECS -static -O2 \
 		$(RESOLVER_IFLAGS) -o $@ \
-		kmod_loader.c $(DEVICES_TABLE_C) $(RESOLVER_SRCS) $(SUBCOMMAND_SRCS)
+		kmod_loader.c $(DEVICES_TABLE_C) $(FINALIZE_SRCS) $(RESOLVER_SRCS) $(SUBCOMMAND_SRCS)
 
 # kmod_loader_dyn — dynamic-link variant (~63 KB) for pre-5.10 Android kernels.
 # Rationale: NDK r30's static bionic calls madvise(MADV_WIPEONFORK) during
@@ -100,10 +110,10 @@ kmod_loader: kmod_loader.c probe_embed.h $(DEVICES_TABLE_C) $(DEVICES_TABLE_H) \
 # path entirely. Scripts that target API ≤ 29 should push this variant
 # instead of the static one.
 kmod_loader_dyn: kmod_loader.c probe_embed.h $(DEVICES_TABLE_C) $(DEVICES_TABLE_H) \
-                 $(RESOLVER_SRCS) $(SUBCOMMAND_SRCS) $(RESOLVER_HDRS)
+                 $(FINALIZE_SRCS) $(RESOLVER_SRCS) $(SUBCOMMAND_SRCS) $(RESOLVER_HDRS)
 	$(LOADER_CC) -DEMBED_PROBE_KO -DKH_RESOLVER_DEFINE_SPECS -O2 \
 		$(RESOLVER_IFLAGS) -o $@ \
-		kmod_loader.c $(DEVICES_TABLE_C) $(RESOLVER_SRCS) $(SUBCOMMAND_SRCS)
+		kmod_loader.c $(DEVICES_TABLE_C) $(FINALIZE_SRCS) $(RESOLVER_SRCS) $(SUBCOMMAND_SRCS)
 
 test: kmod_loader test_resolver test_patch_this_module
 	@./tests/test_config_parser.sh

@@ -17,6 +17,7 @@
 #include "resolver.h"
 #include "subcommands.h"
 #include "patch_this_module.h"
+#include "kh_strategies/finalize.h"
 
 #include <elf.h>
 #include <errno.h>
@@ -417,38 +418,7 @@ static int patch_elf_symbol(uint8_t *mod, size_t mod_alloc_size,
                             const Ehdr *eh, const char *sym_name,
                             uint64_t value)
 {
-    /* Find .symtab and .strtab */
-    Shdr *symtab_sh = NULL, *strtab_sh = NULL;
-    for (int i = 0; i < eh->e_shnum; i++) {
-        Shdr *sh = (Shdr *)(mod + eh->e_shoff + i * eh->e_shentsize);
-        if (sh->sh_type == SHT_SYMTAB && sh->sh_link < eh->e_shnum) {
-            symtab_sh = sh;
-            strtab_sh = (Shdr *)(mod + eh->e_shoff +
-                                 sh->sh_link * eh->e_shentsize);
-            break;
-        }
-    }
-    if (!symtab_sh || !strtab_sh) return -1;
-
-    int num_syms = symtab_sh->sh_size / symtab_sh->sh_entsize;
-    Elf64_Sym *syms = (Elf64_Sym *)(mod + symtab_sh->sh_offset);
-    const char *strs = (const char *)(mod + strtab_sh->sh_offset);
-
-    for (int i = 0; i < num_syms; i++) {
-        if (strcmp(strs + syms[i].st_name, sym_name) != 0) continue;
-        if (syms[i].st_shndx == SHN_UNDEF || syms[i].st_shndx >= eh->e_shnum)
-            continue;
-
-        /* Found: write value to the section at the symbol's offset */
-        if (syms[i].st_shndx >= eh->e_shnum) continue;
-        Shdr *sec = (Shdr *)(mod + eh->e_shoff +
-                             syms[i].st_shndx * eh->e_shentsize);
-        uint64_t offset = sec->sh_offset + syms[i].st_value;
-        if (offset + sizeof(value) > mod_alloc_size) continue;
-        memcpy(mod + offset, &value, sizeof(value));
-        return 0;
-    }
-    return -1;
+    return kh_patch_elf_symbol(mod, mod_alloc_size, eh, sym_name, value);
 }
 
 /* ---- CRC resolution (multi-method) ----
@@ -924,143 +894,12 @@ static int crc_fallback_chain(const char *sym, uint32_t *out);
  * kernel's own toolchain) and patch them into our module.
  */
 
-/* Get file offset of the kCFI hash for a named function in an ELF.
- * Returns the file offset of the 4 bytes before the function entry,
- * or 0 on failure. */
-static uint64_t elf_kcfi_hash_offset(const uint8_t *mod, const Ehdr *eh,
-                                      const char *func_name)
-{
-    Shdr *symtab_sh = NULL;
-    for (int i = 0; i < eh->e_shnum; i++) {
-        Shdr *sh = (Shdr *)(mod + eh->e_shoff + i * eh->e_shentsize);
-        if (sh->sh_type == SHT_SYMTAB) { symtab_sh = sh; break; }
-    }
-    if (!symtab_sh || symtab_sh->sh_link >= eh->e_shnum) return 0;
-
-    Shdr *strtab_sh = (Shdr *)(mod + eh->e_shoff +
-                                symtab_sh->sh_link * eh->e_shentsize);
-    int num_syms = symtab_sh->sh_size / symtab_sh->sh_entsize;
-    Elf64_Sym *syms = (Elf64_Sym *)(mod + symtab_sh->sh_offset);
-    const char *strs = (const char *)(mod + strtab_sh->sh_offset);
-
-    for (int i = 0; i < num_syms; i++) {
-        if (strcmp(strs + syms[i].st_name, func_name) != 0) continue;
-        if (syms[i].st_shndx == SHN_UNDEF || syms[i].st_shndx >= eh->e_shnum)
-            continue;
-
-        Shdr *sec = (Shdr *)(mod + eh->e_shoff +
-                             syms[i].st_shndx * eh->e_shentsize);
-        uint64_t func_file_off = sec->sh_offset + syms[i].st_value;
-        if (func_file_off < 4) return 0;  /* no room for hash prefix */
-        return func_file_off - 4;
-    }
-    return 0;
-}
-
-/* Extract kCFI hash value for a function from a vendor .ko.
- * Returns 0 on failure, or the hash value (which may itself be 0 in
- * theory, but never in practice because kCFI hashes are non-trivial). */
-static uint32_t vendor_kcfi_hash(const uint8_t *ko, const Ehdr *keh,
-                                  const char *func_name)
-{
-    uint64_t off = elf_kcfi_hash_offset(ko, keh, func_name);
-    if (!off) return 0;
-    uint32_t hash;
-    memcpy(&hash, ko + off, 4);
-    return hash;
-}
-
 /* Patch kCFI hashes in module from vendor .ko reference.
  * Scans /vendor/lib/modules/ for a .ko that has both init_module and
  * cleanup_module symbols, extracts their kCFI hashes, and patches ours. */
 static int patch_kcfi_hashes(uint8_t *mod, size_t mod_size, const Ehdr *eh)
 {
-    /* Find init_module and cleanup_module hash offsets in our module */
-    uint64_t our_init_off = elf_kcfi_hash_offset(mod, eh, "init_module");
-    uint64_t our_exit_off = elf_kcfi_hash_offset(mod, eh, "cleanup_module");
-    if (!our_init_off && !our_exit_off) return 0;  /* no symbols to patch */
-
-    /* Try to find a vendor .ko with matching symbols */
-    static const char *vendor_dirs[] = {
-        "/vendor/lib/modules",
-        "/vendor_dlkm/lib/modules",
-        NULL
-    };
-
-    for (int d = 0; vendor_dirs[d]; d++) {
-        DIR *dp = opendir(vendor_dirs[d]);
-        if (!dp) continue;
-
-        struct dirent *de;
-        while ((de = readdir(dp)) != NULL) {
-            size_t nlen = strlen(de->d_name);
-            if (nlen < 4 || strcmp(de->d_name + nlen - 3, ".ko") != 0)
-                continue;
-
-            char path[512];
-            snprintf(path, sizeof(path), "%s/%s", vendor_dirs[d], de->d_name);
-            int fd = open(path, O_RDONLY);
-            if (fd < 0) continue;
-
-            struct stat st;
-            if (fstat(fd, &st) < 0 || st.st_size < 256) {
-                close(fd);
-                continue;
-            }
-
-            uint8_t *ko = malloc(st.st_size);
-            if (!ko) { close(fd); continue; }
-            if (read(fd, ko, st.st_size) != st.st_size) {
-                free(ko); close(fd); continue;
-            }
-            close(fd);
-
-            Ehdr *keh = (Ehdr *)ko;
-            if (memcmp(keh->e_ident, ELFMAG, SELFMAG) != 0) {
-                free(ko); continue;
-            }
-
-            /* Extract hashes from vendor module */
-            uint32_t ref_init_hash = vendor_kcfi_hash(ko, keh, "init_module");
-            uint32_t ref_exit_hash = vendor_kcfi_hash(ko, keh, "cleanup_module");
-            free(ko);
-
-            if (!ref_init_hash && !ref_exit_hash) continue;
-
-            /* Patch our module's kCFI hashes */
-            int patched = 0;
-            if (our_init_off && ref_init_hash &&
-                our_init_off + 4 <= mod_size) {
-                uint32_t old;
-                memcpy(&old, mod + our_init_off, 4);
-                if (old != ref_init_hash) {
-                    memcpy(mod + our_init_off, &ref_init_hash, 4);
-                    fprintf(stderr, "kmod_loader: kCFI init_module: "
-                            "0x%08x -> 0x%08x (from %s)\n",
-                            old, ref_init_hash, de->d_name);
-                    patched++;
-                }
-            }
-            if (our_exit_off && ref_exit_hash &&
-                our_exit_off + 4 <= mod_size) {
-                uint32_t old;
-                memcpy(&old, mod + our_exit_off, 4);
-                if (old != ref_exit_hash) {
-                    memcpy(mod + our_exit_off, &ref_exit_hash, 4);
-                    fprintf(stderr, "kmod_loader: kCFI cleanup_module: "
-                            "0x%08x -> 0x%08x (from %s)\n",
-                            old, ref_exit_hash, de->d_name);
-                    patched++;
-                }
-            }
-
-            closedir(dp);
-            return patched;
-        }
-        closedir(dp);
-    }
-
-    return 0;
+    return kh_patch_kcfi_hashes(mod, mod_size, eh, NULL);
 }
 
 /* ---- __ex_table entry-format patcher ----
@@ -1093,77 +932,49 @@ static int patch_kcfi_hashes(uint8_t *mod, size_t mod_size, const Ehdr *eh)
  */
 static int patch_extable_format(uint8_t *mod, const Ehdr *eh, int target_entry_size)
 {
-    if (target_entry_size != 8 && target_entry_size != 12) return 0;
-    if (target_entry_size == 12) return 0;  /* already native format */
-
-    Shdr *ex = elf_find_section(mod, eh, "__ex_table");
-    if (!ex || ex->sh_size == 0) return 0;
-    if (ex->sh_size % 12 != 0) {
-        fprintf(stderr, "kmod_loader: __ex_table size %lu not multiple of 12 — leaving untouched\n",
-                (unsigned long)ex->sh_size);
-        return 0;
-    }
-    int num_entries = ex->sh_size / 12;
-
-    Shdr *rela = elf_find_section(mod, eh, ".rela__ex_table");
-    if (!rela || rela->sh_entsize != sizeof(Rela)) {
-        fprintf(stderr, "kmod_loader: no .rela__ex_table — assuming pre-resolved values (unusual)\n");
-        /* Without relocs we can't fix up insn/fixup offsets for the new entry
-         * positions. Safer to leave it alone; kernel will reject 12B entries
-         * and module load fails visibly. */
-        return 0;
-    }
-
-    size_t num_relas = rela->sh_size / sizeof(Rela);
-    Rela *relas = (Rela *)(mod + rela->sh_offset);
-    int rewired = 0;
-    for (size_t i = 0; i < num_relas; i++) {
-        uint64_t old_off = relas[i].r_offset;
-        uint64_t entry_idx = old_off / 12;
-        uint64_t field_off = old_off % 12;
-        if (field_off != 0 && field_off != 4) {
-            fprintf(stderr, "kmod_loader: unexpected __ex_table reloc field_off=%lu — abort\n",
-                    (unsigned long)field_off);
-            return -1;
-        }
-        if ((int)entry_idx >= num_entries) continue;
-        relas[i].r_offset = entry_idx * 8 + field_off;
-        rewired++;
-    }
-
-    ex->sh_size = (uint32_t)(num_entries * 8);
-    fprintf(stderr, "kmod_loader: __ex_table: %d entries compressed 12B→8B "
-            "(legacy format, %d relocs rewired)\n", num_entries, rewired);
-    return num_entries;
+    return kh_patch_extable_format(mod, eh, target_entry_size);
 }
+
+/* ---- kmod_loader callback implementations for kh_finalize_callbacks ---- */
+
+static int km_crc_lookup_cb(const char *sym, uint32_t *out, void *userdata)
+{
+    (void)userdata;
+    return crc_fallback_chain(sym, out);
+}
+
+static int km_vermagic_get_cb(char *out, size_t cap, void *userdata)
+{
+    (void)userdata;
+    const char *vm = get_vermagic();
+    if (!vm) return -1;
+    size_t len = strlen(vm);
+    if (len >= cap) return -1;
+    memcpy(out, vm, len + 1);
+    return 0;
+}
+
+static int km_module_layout_preset_cb(uint32_t *init_off, uint32_t *exit_off,
+                                      uint32_t *mod_size, void *userdata)
+{
+    const struct kver_preset *p = (const struct kver_preset *)userdata;
+    if (!p) return -1;
+    if (init_off)  *init_off  = p->init_off;
+    if (exit_off)  *exit_off  = p->exit_off;
+    if (mod_size)  *mod_size  = p->mod_size;
+    return 0;
+}
+
+static const struct kh_finalize_callbacks km_callbacks_nocb = {
+    .crc_lookup           = km_crc_lookup_cb,
+    .vermagic_get         = km_vermagic_get_cb,
+    .module_layout_preset = NULL,  /* preset passed per-call via userdata */
+    .userdata             = NULL,
+};
 
 static int patch_crcs(uint8_t *mod, const Ehdr *eh)
 {
-    Shdr *ver = elf_find_section(mod, eh, "__versions");
-    if (!ver || ver->sh_size == 0) return 0;
-
-    int patched = 0;
-    int num_entries = ver->sh_size / 64;
-    for (int i = 0; i < num_entries; i++) {
-        uint8_t *ent = mod + ver->sh_offset + i * 64;
-        const char *sym = (const char *)(ent + 8);
-        uint32_t new_crc;
-
-        if (crc_fallback_chain(sym, &new_crc) == 0) {
-            uint32_t old_crc;
-            memcpy(&old_crc, ent, 4);
-            if (old_crc != new_crc) {
-                memcpy(ent, &new_crc, 4);
-                fprintf(stderr, "kmod_loader: CRC %s: 0x%08x -> 0x%08x\n",
-                        sym, old_crc, new_crc);
-            }
-            patched++;
-        } else {
-            fprintf(stderr, "kmod_loader: CRC %s: not found (keeping 0x%08x)\n",
-                    sym, *(uint32_t *)ent);
-        }
-    }
-    return patched;
+    return kh_patch_crcs(mod, eh, &km_callbacks_nocb);
 }
 
 /* ---- patch_crcs_via_resolver (Plan 2 M-C T13) ----
@@ -1374,39 +1185,7 @@ static uint8_t *expand_modinfo_section(const uint8_t *mod, size_t mod_size,
 
 static void patch_vermagic(uint8_t *mod, const Ehdr *eh)
 {
-    Shdr *mi = elf_find_section(mod, eh, ".modinfo");
-    if (!mi) return;
-
-    const char *new_vm = get_vermagic();
-    if (!new_vm) return;
-
-    uint8_t *base = mod + mi->sh_offset;
-    uint8_t *end = base + mi->sh_size;
-
-    for (uint8_t *p = base; p < end; ) {
-        if (strncmp((char *)p, "vermagic=", 9) == 0) {
-            char *old_vm = (char *)p + 9;
-            /* Calculate available space: scan past null padding to next
-             * non-null modinfo entry or section end. This handles padded
-             * vermagic strings (where padding is null bytes after the string). */
-            size_t str_len = strlen(old_vm);
-            char *slot_end = old_vm + str_len + 1; /* past first null */
-            while (slot_end < (char *)end && *slot_end == '\0')
-                slot_end++; /* skip padding nulls */
-            size_t avail = (size_t)(slot_end - old_vm - 1); /* -1 for terminator */
-            size_t new_len = strlen(new_vm);
-            if (new_len <= avail) {
-                memcpy(old_vm, new_vm, new_len);
-                memset(old_vm + new_len, 0, avail - new_len + 1);
-                fprintf(stderr, "kmod_loader: vermagic patched (avail=%zu)\n", avail);
-            } else {
-                fprintf(stderr, "kmod_loader: new vermagic too long (%zu > %zu)\n",
-                        new_len, avail);
-            }
-            return;
-        }
-        p += strlen((char *)p) + 1;
-    }
+    kh_patch_vermagic(mod, eh, &km_callbacks_nocb);
 }
 
 /* ---- patch_vermagic_via_resolver (Plan 2 M-C T13) ----
@@ -1468,97 +1247,13 @@ static void patch_vermagic_via_resolver(uint8_t *mod, const Ehdr *eh,
 static int patch_module_layout(uint8_t *mod, size_t mod_size, const Ehdr *eh,
                                const struct kver_preset *preset)
 {
-    Shdr *this_mod = elf_find_section(mod, eh, ".gnu.linkonce.this_module");
-    Shdr *rela = elf_find_section(mod, eh, ".rela.gnu.linkonce.this_module");
-
-    if (!this_mod) {
-        fprintf(stderr, "kmod_loader: .gnu.linkonce.this_module not found\n");
-        return -1;
-    }
-
-    /* Historical note: prior versions of this function memset the entire
-     * .gnu.linkonce.this_module section to zero "to prevent kernel crashes in
-     * module_notifier callbacks" and then shrank sh_size to preset->mod_size.
-     * Both of those writes broke real modules on kernel 6.1 (Pixel_34, GKI
-     * android14): exporter.ko's init function never ran because the zeroing
-     * clobbered data the kernel-side loader depends on (beyond what the
-     * relocations re-populate), and the shrink truncated the section below
-     * relocation targets in some build flavors. Plan 2 M-E T17 isolates the
-     * root cause via a bisect (KH_DBG_SKIP_LAYOUT=1 → load succeeds;
-     * KH_DBG_LAYOUT_RELA_ONLY=1 → load AND init succeed), and the fix is to
-     * patch only the init/exit relocation r_offset values — the kernel copies
-     * and initializes struct module itself from relocated pointers, so our
-     * only responsibility is ensuring the init/exit function pointers land at
-     * the offsets the running kernel's struct module expects.
-     *
-     * The compile-time THIS_MODULE macro already places the module name at
-     * offset 24 of .gnu.linkonce.this_module, so no name restore is needed.
-     * We also do NOT modify sh_size: the kernel allocates its own struct
-     * module (sized by the running kernel, not our build kernel) and copies
-     * fields based on relocations; truncating sh_size in the ELF only risks
-     * chopping off relocation targets the kernel still needs to apply. */
-    (void)mod_size;
-
-    /* Patch relocation offsets for init/exit.
-     * Only patch relocations whose symbol resolves to init_module or
-     * cleanup_module. Other relocations (e.g., cfi_check) are left as-is. */
-    if (rela && rela->sh_size >= 2 * sizeof(Rela)) {
-        Rela *entries = (Rela *)(mod + rela->sh_offset);
-        int num_rela = rela->sh_size / sizeof(Rela);
-
-        /* Find init_module and cleanup_module symbol indices */
-        Shdr *symtab_sh2 = NULL;
-        for (int i = 0; i < eh->e_shnum; i++) {
-            Shdr *sh = (Shdr *)(mod + eh->e_shoff + i * eh->e_shentsize);
-            if (sh->sh_type == SHT_SYMTAB) { symtab_sh2 = sh; break; }
-        }
-        uint32_t init_sym_idx = 0, exit_sym_idx = 0;
-        if (symtab_sh2 && symtab_sh2->sh_link < eh->e_shnum) {
-            Shdr *str = (Shdr *)(mod + eh->e_shoff +
-                                 symtab_sh2->sh_link * eh->e_shentsize);
-            int ns = symtab_sh2->sh_size / symtab_sh2->sh_entsize;
-            Elf64_Sym *sy = (Elf64_Sym *)(mod + symtab_sh2->sh_offset);
-            const char *st = (const char *)(mod + str->sh_offset);
-            for (int i = 0; i < ns; i++) {
-                const char *n = st + sy[i].st_name;
-                if (strcmp(n, "init_module") == 0) init_sym_idx = i;
-                else if (strcmp(n, "cleanup_module") == 0) exit_sym_idx = i;
-            }
-        }
-
-        for (int i = 0; i < num_rela; i++) {
-            uint32_t sym_idx = (uint32_t)(entries[i].r_info >> 32);
-            uint64_t old_off = entries[i].r_offset;
-
-            if (sym_idx == init_sym_idx && init_sym_idx != 0) {
-                if (old_off != preset->init_off) {
-                    fprintf(stderr, "kmod_loader: init offset 0x%llx -> 0x%x\n",
-                            (unsigned long long)old_off, preset->init_off);
-                    entries[i].r_offset = preset->init_off;
-                }
-            } else if (sym_idx == exit_sym_idx && exit_sym_idx != 0) {
-                if (old_off != preset->exit_off) {
-                    fprintf(stderr, "kmod_loader: exit offset 0x%llx -> 0x%x\n",
-                            (unsigned long long)old_off, preset->exit_off);
-                    entries[i].r_offset = preset->exit_off;
-                }
-            }
-            /* Other relocations (cfi_check, etc.) are left unchanged */
-        }
-    }
-
-    /* After patching reloc offsets, shrink .gnu.linkonce.this_module
-     * sh_size to match the running kernel's sizeof(struct module).
-     * Required by Android 15 GKI 6.6+; a no-op on older kernels that
-     * don't enforce the check. The helper is defensive: it refuses
-     * the shrink if a relocation target would be cut off, leaving
-     * sh_size untouched so the caller's error path surfaces cleanly.
-     *
-     * The helper takes an unsigned long long * (not Shdr *) to avoid
-     * an <elf.h> dependency in its host unit test on macOS. */
-    (void)maybe_shrink_this_module_sh_size(&this_mod->sh_size, preset);
-
-    return 0;
+    struct kh_finalize_callbacks cb = {
+        .crc_lookup           = km_crc_lookup_cb,
+        .vermagic_get         = km_vermagic_get_cb,
+        .module_layout_preset = km_module_layout_preset_cb,
+        .userdata             = (void *)preset,
+    };
+    return kh_patch_module_layout(mod, mod_size, eh, &cb);
 }
 
 /* ---- Probe struct module size ---- */
@@ -1646,83 +1341,7 @@ static __attribute__((unused)) uint32_t probe_mod_size(uint8_t *mod, size_t mod_
 
 static void patch_printk_symbol(uint8_t *mod, const Ehdr *eh)
 {
-    /* Check if kernel exports _printk or printk */
-    uint64_t addr_printk = ksym_addr("printk");
-    uint64_t addr_uprintk = ksym_addr("_printk");
-
-    /* Our module uses _printk by default (6.1+). If kernel has printk instead,
-     * patch the symbol name in __versions and in the symbol table. */
-    if (addr_uprintk) return; /* _printk exists, no patch needed */
-    if (!addr_printk) return; /* neither exists?! */
-
-    fprintf(stderr, "kmod_loader: kernel uses 'printk' instead of '_printk'\n");
-
-    /* Patch __versions entry */
-    Shdr *ver = elf_find_section(mod, eh, "__versions");
-    if (ver) {
-        int n = ver->sh_size / 64;
-        for (int i = 0; i < n; i++) {
-            char *sym = (char *)(mod + ver->sh_offset + i * 64 + 8);
-            if (strcmp(sym, "_printk") == 0) {
-                /* Shift name left by 1 to remove underscore */
-                memmove(sym, sym + 1, strlen(sym)); /* "printk\0" */
-                fprintf(stderr, "kmod_loader: __versions _printk -> printk\n");
-            }
-        }
-    }
-
-    /* Patch strtab in place: find the UND symbol named "_printk" and
-     * overwrite the 7 bytes starting at its st_name offset with "printk\0"
-     * (shifting the name left by 1 byte within strtab).
-     *
-     * This works whether the string is standalone or aliased into a longer
-     * LOCAL symbol's name:
-     *   (a) kh_test.ko has a standalone "_printk\0" — shift produces
-     *       "printk\0\0" which reads as "printk".
-     *   (b) export_link_test/exporter.ko has "_printk" aliased inside
-     *       "__modver_printk\0" (at offset +8). Shifting those 7 bytes in
-     *       place renames that local OBJECT symbol from "__modver_printk"
-     *       to "__modverprintk" — a cosmetic change. Local symbols are
-     *       only read by diagnostic paths (kallsyms, oops backtraces); the
-     *       kernel's find_symbol / resolve path does NOT consult them. So
-     *       the corrupted local name has no functional effect, while the
-     *       UND _printk lookup now correctly resolves to "printk".
-     *
-     * We DO NOT bump st_name. An earlier attempt at that caused a kernel
-     * panic in find_symbol → bsearch → strcmp on Pixel_30 (kernel 5.4),
-     * suspected to be cascading effects from other symbol table fields
-     * becoming inconsistent with the new offset. Patching the bytes in
-     * place is the safer minimum-diff approach.
-     */
-    Shdr *symtab_sh = NULL, *linked_strtab = NULL;
-    for (int i = 0; i < eh->e_shnum; i++) {
-        Shdr *sh = (Shdr *)(mod + eh->e_shoff + i * eh->e_shentsize);
-        if (sh->sh_type == SHT_SYMTAB && sh->sh_link < eh->e_shnum) {
-            symtab_sh = sh;
-            linked_strtab = (Shdr *)(mod + eh->e_shoff +
-                                     sh->sh_link * eh->e_shentsize);
-            break;
-        }
-    }
-    if (symtab_sh && linked_strtab) {
-        int num_syms = symtab_sh->sh_size / symtab_sh->sh_entsize;
-        Elf64_Sym *syms = (Elf64_Sym *)(mod + symtab_sh->sh_offset);
-        char *strs = (char *)(mod + linked_strtab->sh_offset);
-        int patched = 0;
-        for (int i = 0; i < num_syms; i++) {
-            if (syms[i].st_shndx != SHN_UNDEF) continue;  /* only UND */
-            char *name = strs + syms[i].st_name;
-            if (strcmp(name, "_printk") == 0) {
-                /* Shift "printk\0" left by 1, overwriting the leading '_'. */
-                memmove(name, name + 1, strlen(name));
-                patched++;
-            }
-        }
-        if (patched) {
-            fprintf(stderr, "kmod_loader: strtab UND _printk -> printk (%d)\n",
-                    patched);
-        }
-    }
+    kh_patch_printk_symbol(mod, eh, NULL);
 }
 
 /* ---- Probe stubs (Method A: disassembly, Method B: binary probe) ---- */
