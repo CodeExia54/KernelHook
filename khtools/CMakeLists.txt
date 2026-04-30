@@ -58,4 +58,8 @@ if(NOT ANDROID AND CMAKE_BUILD_TYPE STREQUAL "Debug")
         "-Wno-unused-parameter")
     add_test(NAME khtools_probe_pixel31 COMMAND test_probe_pixel31)
     set_tests_properties(khtools_probe_pixel31 PROPERTIES SKIP_RETURN_CODE 77)
+
+    add_test(NAME khtools_dump_syms_pixel31
+             COMMAND ${CMAKE_SOURCE_DIR}/khtools/tests/test_dump_syms_pixel31.sh)
+    set_tests_properties(khtools_dump_syms_pixel31 PROPERTIES SKIP_RETURN_CODE 77)
 endif()
