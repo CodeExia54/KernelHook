@@ -316,3 +316,23 @@ make -C examples/hello_hook KDIR=/path/to/linux-headers-arm64
 
 Android userspace tests still require an NDK — they will fail fast with a
 clear error if only system cross-gcc is available.
+
+## Fat-link mode (KH_FAT_LINK=1)
+
+Builds a single `kernelhook.ko` (the *fat* `.ko`) that statically links the SDK base **plus** any consumers selected via `KH_MODULES`. The consumers register themselves into a `.kh_consumer_table` ELF section via the `kh_consumer_register` macro; a master init in `fat_main.c` walks the section in priority order and dispatches each consumer's init/exit.
+
+```bash
+make -C kmod module KH_FAT_LINK=1 KH_MODULES=apd,khm,supercall
+```
+
+This is the build mode for the path-1 / path-2 install flows in `khtools`. Without `KH_FAT_LINK`, `kernelhook.ko` is the standalone SDK base and consumers compile separately as their own `.ko` files — that path remains the dev-mode workflow.
+
+`KH_MODULES` accepts a comma-separated list. Currently supported consumers (skeletons that prove dispatch wiring; full functionality lands in Phase 5b / C subspec):
+
+| Module | Priority | Source |
+|---|---|---|
+| `supercall` | `KH_PRIO_SUBSYS` (100) | `kmod/consumers/supercall/` |
+| `apd`       | `KH_PRIO_NORMAL` (500) | `kmod/consumers/apd/` |
+| `khm`       | `KH_PRIO_NORMAL` (500) | `kmod/consumers/khm/` |
+
+When `KH_FAT_LINK` is unset, each consumer's `kh_consumer_init(...)` macro expands to its own `module_init / module_exit`, so existing `examples/*` and any consumer's `make module` continue to produce a separate `.ko` with no source changes.

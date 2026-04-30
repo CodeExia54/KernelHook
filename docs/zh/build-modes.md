@@ -295,3 +295,23 @@ make -C examples/hello_hook KDIR=/path/to/linux-headers-arm64
 ```
 
 Android 用户空间测试仍然需要 NDK——若只有系统 cross-gcc，会立即报错并给出明确提示。
+
+## Fat-link 模式 (KH_FAT_LINK=1)
+
+构建一份 `kernelhook.ko`（即 *fat* `.ko`），它把 SDK 基底**加上** `KH_MODULES` 选定的 consumer 静态链接在一起。consumer 通过 `kh_consumer_register` 宏注册进 `.kh_consumer_table` ELF section；`fat_main.c` 里的 master init 按优先级顺序走 section，逐个调用 consumer 的 init / exit。
+
+```bash
+make -C kmod module KH_FAT_LINK=1 KH_MODULES=apd,khm,supercall
+```
+
+这是 `khtools` 路径 1 / 路径 2 安装流程使用的构建模式。如果不开 `KH_FAT_LINK`，`kernelhook.ko` 还是 standalone SDK 基底，consumer 各自独立编成自己的 `.ko`——这条路径仍然作为开发者模式工作流。
+
+`KH_MODULES` 接受逗号分隔列表。当前支持的 consumer（仅证明 dispatch 接线的骨架；完整功能放在 Phase 5b / C 子规范）：
+
+| 模块 | 优先级 | 源码 |
+|---|---|---|
+| `supercall` | `KH_PRIO_SUBSYS` (100) | `kmod/consumers/supercall/` |
+| `apd`       | `KH_PRIO_NORMAL` (500) | `kmod/consumers/apd/` |
+| `khm`       | `KH_PRIO_NORMAL` (500) | `kmod/consumers/khm/` |
+
+不开 `KH_FAT_LINK` 时，每个 consumer 的 `kh_consumer_init(...)` 宏会展开成各自的 `module_init / module_exit`，所以现有 `examples/*` 以及任何 consumer 的 `make module` 都不需要改源码就能继续编出独立 `.ko`。

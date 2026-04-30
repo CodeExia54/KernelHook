@@ -1,5 +1,7 @@
 # kmod_loader -- 自适应模块加载器
 
+> **说明（2026-04+）**：本文档描述的是**开发者模式加载器**。生产安装请走 `khtools finalize` + `khinsmod`（路径 1）或 `khtools patch`（路径 2），详见 [khtools.md](khtools.md)、[path1-quickstart.md](path1-quickstart.md) 和 [path2-bootpatch.md](path2-bootpatch.md)。`kmod_loader` 仍保留下来用于「不想在 PC 上做 finalize、只想运行时修补」的开发流程。
+
 `kmod_loader` 是一个用户态工具，在加载时动态修补 freestanding `.ko` 二进制文件，使其适配当前运行内核的 ABI，实现跨内核版本加载，无需重新编译。
 
 ## 用法

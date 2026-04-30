@@ -31,10 +31,24 @@
 
 > **注意**：AVD 覆盖范围按 GKI 镜像版本钉死（如 Pixel_34 = 6.1.23-android14-4）。真机如果跑的是更新的 6.1 sub-version（如 Pixel 6 / 6.1.99-android14-11），即便主次版本号还叫 6.1，也已带上 Android 15+ 的 kCFI initcall 检查，需要走 graft 路径。
 
+## 安装路径
+
+KernelHook 通过两条路径达到同一终态——kernel 加载 fat.ko payload，对外暴露 consumer 模块（apd / khm / supercall）以及可选的 KernelSU 集成。
+
+| | 路径 1（已 root 设备） | 路径 2（boot.img 修补） |
+|---|---|---|
+| 前置条件 | 已有 root 权限 | bootloader 已解锁 |
+| PC 工具 | `khtools finalize` | `khtools patch` |
+| 设备端工具 | `khinsmod fat.ko` | （开机自动加载） |
+| KSU 集成 | `khinsmod fat.ko --ksu ksu.ko` | `khtools patch --ksu-lkm ksu.ko ...` |
+
+详见 [docs/zh/path1-quickstart.md](docs/zh/path1-quickstart.md) 和 [docs/zh/path2-bootpatch.md](docs/zh/path2-bootpatch.md)。PC 构建工具命令参考：[docs/zh/khtools.md](docs/zh/khtools.md)。
+
 ## 文档
 
 - [快速上手](docs/zh/getting-started.md) · [API 参考](docs/zh/api-reference.md) · [kh_root Demo](docs/zh/kh-root-demo.md)
 - [构建模式](docs/zh/build-modes.md) · [kmod_loader](docs/zh/kmod-loader.md) · [AVD 测试](docs/zh/avd-testing.md) · [示例](docs/zh/examples.md)
+- [khtools (PC 构建工具)](docs/zh/khtools.md) · [路径 1 快速上手](docs/zh/path1-quickstart.md) · [路径 2 boot.img 修补](docs/zh/path2-bootpatch.md)
 - [English](README.md)
 
 ## 构建与测试

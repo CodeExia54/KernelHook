@@ -1,5 +1,7 @@
 # kmod_loader -- Adaptive Module Loader
 
+> **Note (2026-04+)**: This document describes the **developer-mode loader**. For production install, use `khtools finalize` + `khinsmod` (path 1) or `khtools patch` (path 2). See [khtools.md](khtools.md), [path1-quickstart.md](path1-quickstart.md), and [path2-bootpatch.md](path2-bootpatch.md). `kmod_loader` is preserved for dev workflows where you want runtime patching without a PC-side finalize pass.
+
 `kmod_loader` is a userspace tool that patches a freestanding `.ko` binary at load time to match the running kernel's ABI. It enables cross-kernel module loading without recompilation.
 
 ## Usage

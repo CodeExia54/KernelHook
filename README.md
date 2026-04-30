@@ -31,10 +31,24 @@ Verified on AVD emulators (Pixel_28..Pixel_37) and a Pixel USB device:
 
 > **Note**: AVD coverage is GKI-pinned (e.g. Pixel_34 = 6.1.23-android14-4). Real devices on later 6.1 sub-versions (e.g. Pixel 6 / 6.1.99-android14-11) inherit Android 15+ kCFI initcall checks and need the graft path even though their major.minor still says 6.1.
 
+## Installation Paths
+
+KernelHook installs via two paths to the same end state — kernel running with a fat.ko payload that exposes consumer modules (apd / khm / supercall) and optional KernelSU integration.
+
+| | Path 1 (rooted device) | Path 2 (boot.img patch) |
+|---|---|---|
+| Prereq | Existing root | Bootloader unlocked |
+| PC tool | `khtools finalize` | `khtools patch` |
+| Device tool | `khinsmod fat.ko` | (boot loads automatically) |
+| KSU integration | `khinsmod fat.ko --ksu ksu.ko` | `khtools patch --ksu-lkm ksu.ko ...` |
+
+See [docs/en/path1-quickstart.md](docs/en/path1-quickstart.md) and [docs/en/path2-bootpatch.md](docs/en/path2-bootpatch.md). The PC build tool reference lives at [docs/en/khtools.md](docs/en/khtools.md).
+
 ## Documentation
 
 - [Getting Started](docs/en/getting-started.md) · [API Reference](docs/en/api-reference.md) · [kh_root Demo](docs/en/kh-root-demo.md)
 - [Build Modes](docs/en/build-modes.md) · [kmod_loader](docs/en/kmod-loader.md) · [AVD Testing](docs/en/avd-testing.md) · [Examples](docs/en/examples.md)
+- [khtools (PC build tool)](docs/en/khtools.md) · [Path 1 quickstart](docs/en/path1-quickstart.md) · [Path 2 boot.img patch](docs/en/path2-bootpatch.md)
 - [中文文档](README_zh.md)
 
 ## Build & Test
