@@ -4,11 +4,18 @@ add_executable(khtools
     src/cmd_probe.c
     src/cmd_dump_syms.c
     src/probe_image.c
+    src/finalize_glue.c
     src/kallsym.c
     src/order.c
     src/insn.c
     src/common.c
 )
+# cmd_finalize.c includes <elf.h> and calls kh_patch_* — only available when
+# elf.h is present (Linux/Android NDK targets; excluded on macOS CMake builds).
+if(KH_HAS_ELF_H)
+    target_sources(khtools PRIVATE src/cmd_finalize.c)
+    target_compile_definitions(khtools PRIVATE KH_HAS_ELF_H=1)
+endif()
 target_link_libraries(khtools PRIVATE kh_strategies z)
 target_include_directories(khtools PRIVATE src)
 target_compile_options(khtools PRIVATE -Wall -Wextra -Werror)
@@ -62,4 +69,8 @@ if(NOT ANDROID AND CMAKE_BUILD_TYPE STREQUAL "Debug")
     add_test(NAME khtools_dump_syms_pixel31
              COMMAND ${CMAKE_SOURCE_DIR}/khtools/tests/test_dump_syms_pixel31.sh)
     set_tests_properties(khtools_dump_syms_pixel31 PROPERTIES SKIP_RETURN_CODE 77)
+
+    add_test(NAME khtools_finalize_smoke
+             COMMAND ${CMAKE_SOURCE_DIR}/khtools/tests/test_finalize_smoke.sh)
+    set_tests_properties(khtools_finalize_smoke PROPERTIES SKIP_RETURN_CODE 77)
 endif()

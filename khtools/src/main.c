@@ -27,6 +27,9 @@ int main(int argc, char **argv) {
     if (!strcmp(cmd, "-h") || !strcmp(cmd, "--help")) { usage(); return 0; }
     if (!strcmp(cmd, "probe"))     return cmd_probe(argc - 1, argv + 1);
     if (!strcmp(cmd, "dump-syms")) return cmd_dump_syms(argc - 1, argv + 1);
+#ifdef KH_HAS_ELF_H
+    if (!strcmp(cmd, "finalize"))  return cmd_finalize(argc - 1, argv + 1);
+#endif
     fprintf(stderr, "khtools: unknown subcommand '%s'\n", cmd);
     usage();
     return 1;
