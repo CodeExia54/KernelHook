@@ -54,6 +54,7 @@ add_subdirectory(kh_strategies)
 add_subdirectory(khtools)
 if(ANDROID)
     add_subdirectory(khinsmod)
+    add_subdirectory(khctl)
 endif()
 
 target_include_directories(kernelhook PUBLIC
