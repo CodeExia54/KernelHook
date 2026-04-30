@@ -5,25 +5,8 @@
 #include <string.h>
 #include <getopt.h>
 #include "cmd_dispatch.h"
+#include "file_io.h"
 #include "probe_image.h"
-
-static int read_file(const char *path, uint8_t **out_buf, size_t *out_len) {
-    FILE *f = fopen(path, "rb");
-    if (!f) return -1;
-    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return -1; }
-    long n = ftell(f);
-    if (n < 0) { fclose(f); return -1; }
-    if (fseek(f, 0, SEEK_SET) != 0) { fclose(f); return -1; }
-    uint8_t *buf = malloc((size_t)n);
-    if (!buf) { fclose(f); return -1; }
-    if (fread(buf, 1, (size_t)n, f) != (size_t)n) {
-        fclose(f); free(buf); return -1;
-    }
-    fclose(f);
-    *out_buf = buf;
-    *out_len = (size_t)n;
-    return 0;
-}
 
 int cmd_probe(int argc, char **argv) {
     static struct option opts[] = {
@@ -44,7 +27,7 @@ int cmd_probe(int argc, char **argv) {
     }
     uint8_t *buf;
     size_t len;
-    if (read_file(image_path, &buf, &len) < 0) {
+    if (kh_read_file(image_path, &buf, &len) < 0) {
         fprintf(stderr, "khtools probe: cannot read %s\n", image_path);
         return 2;
     }

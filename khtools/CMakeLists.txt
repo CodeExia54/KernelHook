@@ -3,6 +3,7 @@ add_executable(khtools
     src/main.c
     src/cmd_probe.c
     src/cmd_dump_syms.c
+    src/file_io.c
     src/probe_image.c
     src/finalize_glue.c
     src/kallsym.c

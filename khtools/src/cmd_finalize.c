@@ -6,30 +6,9 @@
 #include <getopt.h>
 #include <elf.h>
 #include "cmd_dispatch.h"
+#include "file_io.h"
 #include "finalize_glue.h"
 #include "kh_strategies/finalize.h"
-
-static int read_file(const char *path, uint8_t **out_buf, size_t *out_len) {
-    FILE *f = fopen(path, "rb");
-    if (!f) return -1;
-    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return -1; }
-    long n = ftell(f);
-    if (n < 0) { fclose(f); return -1; }
-    fseek(f, 0, SEEK_SET);
-    uint8_t *buf = malloc((size_t)n);
-    if (!buf) { fclose(f); return -1; }
-    if (fread(buf, 1, (size_t)n, f) != (size_t)n) {
-        fclose(f); free(buf); return -1;
-    }
-    fclose(f); *out_buf = buf; *out_len = (size_t)n; return 0;
-}
-
-static int write_file(const char *p, const uint8_t *b, size_t l) {
-    FILE *f = fopen(p, "wb");
-    if (!f) return -1;
-    if (fwrite(b, 1, l, f) != l) { fclose(f); return -1; }
-    fclose(f); return 0;
-}
 
 /* Callbacks bridging kh_strategies into our offline ctx. */
 static int kt_crc_lookup_cb(const char *sym, uint32_t *out_crc, void *userdata) {
@@ -78,11 +57,11 @@ int cmd_finalize(int argc, char **argv) {
 
     uint8_t *image, *ko;
     size_t image_len, ko_len;
-    if (read_file(image_p, &image, &image_len) < 0) {
+    if (kh_read_file(image_p, &image, &image_len) < 0) {
         fprintf(stderr, "khtools finalize: cannot read %s\n", image_p);
         return 2;
     }
-    if (read_file(in_p, &ko, &ko_len) < 0) {
+    if (kh_read_file(in_p, &ko, &ko_len) < 0) {
         fprintf(stderr, "khtools finalize: cannot read %s\n", in_p);
         free(image);
         return 2;
@@ -113,11 +92,11 @@ int cmd_finalize(int argc, char **argv) {
         .userdata             = &ctx,
     };
 
-    Elf64_Ehdr *eh = (Elf64_Ehdr *)ko;
-    if (eh->e_ident[0] != 0x7f) {
+    if (ko_len < sizeof(Elf64_Ehdr) || memcmp(ko, "\x7f""ELF", 4) != 0) {
         fprintf(stderr, "kh: finalize: input ko is not ELF\n");
         kh_finalize_ctx_free(&ctx); free(image); free(ko); return 2;
     }
+    Elf64_Ehdr *eh = (Elf64_Ehdr *)ko;
 
     /* Apply patch primitives. Order mirrors kmod_loader's pre-finit flow.
      * Best-effort: per-step failures are non-fatal (some patches are optional,
@@ -135,7 +114,7 @@ int cmd_finalize(int argc, char **argv) {
         kh_finalize_ctx_free(&ctx); free(image); free(ko); return 4;
     }
 
-    if (write_file(out_p, ko, ko_len) < 0) {
+    if (kh_write_file(out_p, ko, ko_len) < 0) {
         fprintf(stderr, "kh: finalize: cannot write %s\n", out_p);
         kh_finalize_ctx_free(&ctx); free(image); free(ko); return 2;
     }
