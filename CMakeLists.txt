@@ -52,6 +52,9 @@ add_library(kernelhook STATIC ${LIB_SOURCES})
 
 add_subdirectory(kh_strategies)
 add_subdirectory(khtools)
+if(ANDROID)
+    add_subdirectory(khinsmod)
+endif()
 
 target_include_directories(kernelhook PUBLIC
     include
