@@ -51,6 +51,8 @@ FS_CFLAGS := -DKMOD_FREESTANDING \
              -I$(KH_ROOT)/include -I$(KH_ROOT)/include/arch/arm64 \
              -march=armv8.5-a -O2 -Wall -Wextra -Werror \
              -Wno-unused-parameter -Wno-unused-function
+FS_CFLAGS += -I$(KH_ROOT)/kh_strategies/include
+FS_CFLAGS += -I$(KH_ROOT)/tools/kmod_loader
 
 .PHONY: all regenerate clean test graft
 
@@ -69,21 +71,25 @@ graft: graft_vendor_ko
 	@echo "graft_vendor_ko built.  Usage: ./graft_vendor_ko --help"
 
 RESOLVER_SRCS := resolver.c \
-                 strategies/cli.c \
-                 strategies/probe_procfs.c \
-                 strategies/probe_loaded.c \
-                 strategies/probe_ondisk.c \
-                 strategies/probe_disasm.c \
-                 strategies/probe_binary.c \
-                 strategies/config.c
+                 $(KH_ROOT)/kh_strategies/src/cli.c \
+                 $(KH_ROOT)/kh_strategies/src/probe_procfs.c \
+                 $(KH_ROOT)/kh_strategies/src/probe_loaded.c \
+                 $(KH_ROOT)/kh_strategies/src/probe_ondisk.c \
+                 $(KH_ROOT)/kh_strategies/src/probe_disasm.c \
+                 $(KH_ROOT)/kh_strategies/src/probe_binary.c \
+                 $(KH_ROOT)/kh_strategies/src/config.c
 
 SUBCOMMAND_SRCS := subcommands.c
 
 RESOLVER_HDRS := resolver.h devices_table.h subcommands.h
 
+# Include path so migrated kh_strategies/src/*.c can find resolver.h and devices_table.h.
+RESOLVER_IFLAGS := -I$(KH_ROOT)/tools/kmod_loader -I$(KH_ROOT)/kh_strategies/include
+
 kmod_loader: kmod_loader.c probe_embed.h $(DEVICES_TABLE_C) $(DEVICES_TABLE_H) \
              $(RESOLVER_SRCS) $(SUBCOMMAND_SRCS) $(RESOLVER_HDRS)
-	$(LOADER_CC) -DEMBED_PROBE_KO -DKH_RESOLVER_DEFINE_SPECS -static -O2 -o $@ \
+	$(LOADER_CC) -DEMBED_PROBE_KO -DKH_RESOLVER_DEFINE_SPECS -static -O2 \
+		$(RESOLVER_IFLAGS) -o $@ \
 		kmod_loader.c $(DEVICES_TABLE_C) $(RESOLVER_SRCS) $(SUBCOMMAND_SRCS)
 
 # kmod_loader_dyn — dynamic-link variant (~63 KB) for pre-5.10 Android kernels.
@@ -95,7 +101,8 @@ kmod_loader: kmod_loader.c probe_embed.h $(DEVICES_TABLE_C) $(DEVICES_TABLE_H) \
 # instead of the static one.
 kmod_loader_dyn: kmod_loader.c probe_embed.h $(DEVICES_TABLE_C) $(DEVICES_TABLE_H) \
                  $(RESOLVER_SRCS) $(SUBCOMMAND_SRCS) $(RESOLVER_HDRS)
-	$(LOADER_CC) -DEMBED_PROBE_KO -DKH_RESOLVER_DEFINE_SPECS -O2 -o $@ \
+	$(LOADER_CC) -DEMBED_PROBE_KO -DKH_RESOLVER_DEFINE_SPECS -O2 \
+		$(RESOLVER_IFLAGS) -o $@ \
 		kmod_loader.c $(DEVICES_TABLE_C) $(RESOLVER_SRCS) $(SUBCOMMAND_SRCS)
 
 test: kmod_loader test_resolver test_patch_this_module

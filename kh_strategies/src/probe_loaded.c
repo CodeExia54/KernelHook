@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-#include "../resolver.h"
+#include "resolver.h"
 #include <dirent.h>
 #include <limits.h>
 #include <stdint.h>

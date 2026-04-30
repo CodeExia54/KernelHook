@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-#include "../resolver.h"
+#include "resolver.h"
 #include <string.h>
 
 #define RET_U64(v) do { out.available = 1; out.u64_val = (v); \

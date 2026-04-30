@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-#include "../resolver.h"
-#include "../devices_table.h"
+#include "resolver.h"
+#include "devices_table.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
