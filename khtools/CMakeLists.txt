@@ -3,6 +3,10 @@ add_executable(khtools
     src/main.c
     src/cmd_probe.c
     src/cmd_dump_syms.c
+    src/cmd_extract.c
+    src/cmd_patch.c
+    src/embed_blob.c
+    src/sha256.c
     src/file_io.c
     src/probe_image.c
     src/finalize_glue.c
@@ -81,4 +85,12 @@ if(NOT ANDROID AND CMAKE_BUILD_TYPE STREQUAL "Debug")
     add_test(NAME khtools_finalize_golden
              COMMAND ${CMAKE_SOURCE_DIR}/khtools/tests/test_finalize_golden.sh)
     set_tests_properties(khtools_finalize_golden PROPERTIES SKIP_RETURN_CODE 77)
+
+    add_test(NAME khtools_extract_smoke
+             COMMAND ${CMAKE_SOURCE_DIR}/khtools/tests/test_extract_smoke.sh)
+    set_tests_properties(khtools_extract_smoke PROPERTIES SKIP_RETURN_CODE 77)
+
+    add_test(NAME khtools_patch_smoke
+             COMMAND ${CMAKE_SOURCE_DIR}/khtools/tests/test_patch_smoke.sh)
+    set_tests_properties(khtools_patch_smoke PROPERTIES SKIP_RETURN_CODE 77)
 endif()

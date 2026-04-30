@@ -30,6 +30,8 @@ int main(int argc, char **argv) {
 #ifdef KH_HAS_ELF_H
     if (!strcmp(cmd, "finalize"))  return cmd_finalize(argc - 1, argv + 1);
 #endif
+    if (!strcmp(cmd, "patch"))   return cmd_patch(argc - 1, argv + 1);
+    if (!strcmp(cmd, "extract")) return cmd_extract(argc - 1, argv + 1);
     fprintf(stderr, "khtools: unknown subcommand '%s'\n", cmd);
     usage();
     return 1;
