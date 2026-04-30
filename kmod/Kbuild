@@ -55,7 +55,16 @@ ccflags-y := \
 # When building fat.ko (with consumers static-linked), include fat_main.o
 # and define KH_FAT_LINK so kh_consumer_register macros emit section table
 # entries instead of standalone module_init/exit.
+#
+# KH_MODULES is a comma-separated list of consumers to compile in.
+# Example: make module KH_FAT_LINK=1 KH_MODULES=khm,apd,supercall
+comma := ,
 ifdef KH_FAT_LINK
   ccflags-y += -DKH_FAT_LINK=1
   kernelhook-y += src/fat_main.o
+
+  ifneq ($(filter khm,$(subst $(comma), ,$(KH_MODULES))),)
+    ccflags-y += -DKH_HAVE_KHM=1
+    kernelhook-y += consumers/khm/khm_main.o
+  endif
 endif
