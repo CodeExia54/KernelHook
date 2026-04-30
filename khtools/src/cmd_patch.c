@@ -12,9 +12,17 @@
  *
  * Trailer is consumed by Task 4.5 (khtools verify) and the future
  * khimg hook-injection step.
+ *
+ * Path-quoting note: --boot, --in, --khimg, --ksu-lkm, --out paths are
+ * passed to magiskboot via system() with single-quote wrapping. Paths
+ * containing a literal single quote will break the shell command. This
+ * matches the project's existing kmod_loader scripts and is acceptable
+ * for dev / CI workflows where paths are pipeline-controlled. A future
+ * hardening could switch to posix_spawn(argv).
  */
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdint.h>
 #include <string.h>
 #include <getopt.h>
 #include <unistd.h>
@@ -101,6 +109,16 @@ int cmd_patch(int argc, char **argv)
         free(fat); free(khimg); free(ksu_buf); free(blob); return 5;
     }
 
+    /* Overflow guard before adding three size_t values. Pathological
+     * inputs (>4GiB combined on 32-bit hosts) would wrap and produce an
+     * undersized malloc → OOB memcpy. */
+    if (kernel_len > SIZE_MAX - khimg_len ||
+        kernel_len + khimg_len > SIZE_MAX - blob_len) {
+        fprintf(stderr, "kh: patch: combined size overflow\n");
+        snprintf(cmd, sizeof(cmd), "rm -rf '%s'", tmpdir); system(cmd);
+        free(fat); free(khimg); free(ksu_buf); free(blob); free(kernel);
+        return 5;
+    }
     size_t new_kernel_len = kernel_len + khimg_len + blob_len;
     uint8_t *new_kernel = malloc(new_kernel_len);
     if (!new_kernel) {
