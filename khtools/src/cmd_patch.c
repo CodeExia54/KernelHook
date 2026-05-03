@@ -1,17 +1,16 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
 /* Copyright (C) 2026 bmax121. All Rights Reserved. */
 /*
- * khtools patch — boot.img → patched-boot.img with embedded kh_blob trailer.
+ * khtools patch — boot.img → patched-boot.img with embedded kh_blob trailer
+ * AND a hook installed in the kernel Image so boot transfers control to the
+ * appended khimg setup_entry (port of KernelPatch tools/patch.c::patch_update_img,
+ * see image_inject.{h,c}).
  *
- * MVP: unpack via magiskboot, append [khimg | kh_blob_table | fat.ko |
- * optional ksu.ko] as a trailer to the kernel section, repack via
- * magiskboot. Does NOT yet write a hook in the kernel Image to actually
- * jump to khimg at boot — that's a Task 4.2 follow-up (port of KP
- * tools/patch.c::find_hook_offset). The patched boot.img boots normally
- * but ignores the trailer.
+ * Layout produced inside the boot.img kernel section:
+ *   [ kernel (B@_stext rewritten) | 4K pad | khimg | kh_blob_table | fat.ko | optional ksu.ko ]
  *
- * Trailer is consumed by Task 4.5 (khtools verify) and the future
- * khimg hook-injection step.
+ * The trailer is consumed by Task 4.5 (khtools verify), khtools list, and
+ * khimg/src/kh_load.c at boot.
  *
  * Path-quoting note: --boot, --in, --khimg, --ksu-lkm, --out paths are
  * passed to magiskboot via system() with single-quote wrapping. Paths
@@ -29,6 +28,7 @@
 #include "cmd_dispatch.h"
 #include "file_io.h"
 #include "embed_blob.h"
+#include "image_inject.h"
 
 int cmd_patch(int argc, char **argv)
 {
@@ -96,9 +96,7 @@ int cmd_patch(int argc, char **argv)
         free(fat); free(khimg); free(ksu_buf); free(blob); return 5;
     }
 
-    /* Read the kernel section, append [khimg | blob], write back.
-     * Hook injection (write_hook_branch into kernel setup path) is a
-     * Task 4.2 follow-up — see commit body for scope rationale. */
+    /* Read the kernel section, run the full hook-injection pipeline, write back. */
     char kernel_path[512];
     snprintf(kernel_path, sizeof(kernel_path), "%s/kernel", tmpdir);
     uint8_t *kernel = NULL;
@@ -109,32 +107,28 @@ int cmd_patch(int argc, char **argv)
         free(fat); free(khimg); free(ksu_buf); free(blob); return 5;
     }
 
-    /* Overflow guard before adding three size_t values. Pathological
-     * inputs (>4GiB combined on 32-bit hosts) would wrap and produce an
-     * undersized malloc → OOB memcpy. */
-    if (kernel_len > SIZE_MAX - khimg_len ||
-        kernel_len + khimg_len > SIZE_MAX - blob_len) {
-        fprintf(stderr, "kh: patch: combined size overflow\n");
+    /* Run the port of KP's patch_update_img: parse kallsyms, NOP PAC,
+     * resolve memblock_*, build setup_preset_t, install B@_stext. */
+    uint8_t *new_kernel = NULL;
+    size_t new_kernel_len = 0;
+    if (kh_image_inject(kernel, kernel_len,
+                        khimg, khimg_len,
+                        blob,  blob_len,
+                        &new_kernel, &new_kernel_len) != 0) {
+        fprintf(stderr, "kh: patch: kh_image_inject failed\n");
         snprintf(cmd, sizeof(cmd), "rm -rf '%s'", tmpdir); system(cmd);
         free(fat); free(khimg); free(ksu_buf); free(blob); free(kernel);
         return 5;
     }
-    size_t new_kernel_len = kernel_len + khimg_len + blob_len;
-    uint8_t *new_kernel = malloc(new_kernel_len);
-    if (!new_kernel) {
-        fprintf(stderr, "kh: patch: malloc failed for new kernel\n");
-        snprintf(cmd, sizeof(cmd), "rm -rf '%s'", tmpdir); system(cmd);
-        free(fat); free(khimg); free(ksu_buf); free(blob); free(kernel); return 5;
-    }
-    memcpy(new_kernel, kernel, kernel_len);
-    memcpy(new_kernel + kernel_len, khimg, khimg_len);
-    memcpy(new_kernel + kernel_len + khimg_len, blob, blob_len);
 
     if (kh_write_file(kernel_path, new_kernel, new_kernel_len) < 0) {
         fprintf(stderr, "kh: patch: cannot write modified kernel\n");
         snprintf(cmd, sizeof(cmd), "rm -rf '%s'", tmpdir); system(cmd);
         free(fat); free(khimg); free(ksu_buf); free(blob); free(kernel); free(new_kernel); return 5;
     }
+    fprintf(stderr,
+            "kh: patch: hook installed at b_stext_insn_offset, "
+            "redirect to khimg setup_entry\n");
 
     /* Repack into the caller's output path. */
     snprintf(cmd, sizeof(cmd),

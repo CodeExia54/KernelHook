@@ -74,3 +74,4 @@ Thumbs.db
 
 # local-only: followup tracking docs (deliberately not in repo)
 docs/followups/
+compile_commands.json

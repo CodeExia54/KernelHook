@@ -8,6 +8,7 @@ add_executable(khtools
     src/cmd_verify.c
     src/cmd_list.c
     src/embed_blob.c
+    src/image_inject.c
     src/sha256.c
     src/file_io.c
     src/probe_image.c
@@ -99,4 +100,20 @@ if(NOT ANDROID AND CMAKE_BUILD_TYPE STREQUAL "Debug")
     add_test(NAME khtools_verify_smoke
              COMMAND ${CMAKE_SOURCE_DIR}/khtools/tests/test_verify_smoke.sh)
     set_tests_properties(khtools_verify_smoke PROPERTIES SKIP_RETURN_CODE 77)
+
+    add_executable(test_image_inject
+        tests/test_image_inject.c
+        src/image_inject.c
+        src/kallsym.c
+        src/order.c
+        src/insn.c
+        src/common.c
+    )
+    target_include_directories(test_image_inject PRIVATE src)
+    target_link_libraries(test_image_inject PRIVATE z)
+    set_source_files_properties(src/kallsym.c PROPERTIES COMPILE_FLAGS
+        "-Wno-unused-variable -Wno-unused-parameter -Wno-unused-function")
+    set_source_files_properties(src/insn.c PROPERTIES COMPILE_FLAGS
+        "-Wno-unused-parameter")
+    add_test(NAME khtools_image_inject COMMAND test_image_inject)
 endif()
