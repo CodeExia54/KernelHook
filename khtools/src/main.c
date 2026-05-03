@@ -16,6 +16,7 @@ static void usage(void) {
         "Subcommands (later phases):\n"
         "  finalize      Adapt fat.ko for a target image\n"
         "  patch         Patch a boot.img with khimg + fat.ko\n"
+        "  patch-image   Patch a raw kernel Image (no boot.img wrapping)\n"
         "  extract       Extract Image from boot.img\n"
         "  list          Inspect a KH artifact\n"
         "  verify        Verify a patched boot.img\n");
@@ -31,6 +32,7 @@ int main(int argc, char **argv) {
     if (!strcmp(cmd, "finalize"))  return cmd_finalize(argc - 1, argv + 1);
 #endif
     if (!strcmp(cmd, "patch"))   return cmd_patch(argc - 1, argv + 1);
+    if (!strcmp(cmd, "patch-image")) return cmd_patch_image(argc - 1, argv + 1);
     if (!strcmp(cmd, "extract")) return cmd_extract(argc - 1, argv + 1);
     if (!strcmp(cmd, "verify"))  return cmd_verify(argc - 1, argv + 1);
     if (!strcmp(cmd, "list"))    return cmd_list(argc - 1, argv + 1);

@@ -5,6 +5,7 @@ add_executable(khtools
     src/cmd_dump_syms.c
     src/cmd_extract.c
     src/cmd_patch.c
+    src/cmd_patch_image.c
     src/cmd_verify.c
     src/cmd_list.c
     src/embed_blob.c
