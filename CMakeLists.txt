@@ -57,6 +57,12 @@ if(ANDROID)
     add_subdirectory(khctl)
 endif()
 
+# Host-only loader subset (pure relocator); see kmod/loader/BLOCKER.md.
+# Skipped on Android because the test binary needs hosted libc.
+if(NOT ANDROID AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/kmod/loader/CMakeLists.txt)
+    add_subdirectory(kmod/loader)
+endif()
+
 target_include_directories(kernelhook PUBLIC
     include
     include/arch/arm64
