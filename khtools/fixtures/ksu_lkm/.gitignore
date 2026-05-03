@@ -1,0 +1,3 @@
+# KSU LKM binaries are fetched on demand by fetch.sh; never committed.
+# MANIFEST.txt + fetch.sh are the source of truth for which release is pinned.
+*.ko

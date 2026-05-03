@@ -1,0 +1,45 @@
+KernelSU LKM fixtures pinned for KH AVD matrix.
+
+Update only by:
+ 1. editing this file (bump version + URL + sha256), and
+ 2. removing the stale .ko under the GKI tag dir so the next fetch.sh
+    redownloads under the new pin.
+
+Source of truth: https://github.com/tiann/KernelSU/releases
+
+Pin: KernelSU v3.2.4
+
+Per-GKI assets used by KH AVD lanes:
+
+  GKI tag          | AVD            | Asset
+  -----------------|----------------|----------------------------------
+  android12-5.10   | Pixel_31..32   | android12-5.10_kernelsu.ko
+  android15-6.6    | Pixel_35..36   | android15-6.6_kernelsu.ko
+  android16-6.12   | Pixel_37       | android16-6.12_kernelsu.ko
+
+URLs:
+  android12-5.10   https://github.com/tiann/KernelSU/releases/download/v3.2.4/android12-5.10_kernelsu.ko
+  android15-6.6    https://github.com/tiann/KernelSU/releases/download/v3.2.4/android15-6.6_kernelsu.ko
+  android16-6.12   https://github.com/tiann/KernelSU/releases/download/v3.2.4/android16-6.12_kernelsu.ko
+
+SHA-256 (verified by fetch.sh):
+  android12-5.10  e3087aaba8897ecc3a43918e257b0e6441c401343295bbc09e20f763636fbd78
+  android15-6.6   78a463e559cfa7a8445931343a9323378f3424ec0bda60445b92b998e8a02073
+  android16-6.12  2e603e07be624983c1a4faac3c82fc94e8c4c41cd07bceb1550a4639dcedee41
+
+Sizes (informational, not enforced):
+  android12-5.10  327576 bytes
+  android15-6.6   285752 bytes
+  android16-6.12  361136 bytes
+
+Notes:
+- KernelSU did not ship an android14-5.10 build for this release; Pixel_31
+  AVD (which Google ships with kernel 5.10) is exercised against the
+  android12-5.10 LKM. The KH path-1 / path-2 paths only require ABI/vermagic
+  match with the running kernel — KSU's "android version" suffix is for
+  KSU's own userspace bring-up and irrelevant to KH's loader.
+- android13-5.15 / android14-5.15 / android14-6.1 are released by KSU but
+  not currently exercised by KH AVDs; add a directory + entry above when a
+  matching AVD lane lands.
+- The .ko binaries are NOT checked into the repo. Run khtools/fixtures/ksu_lkm/fetch.sh
+  to materialize them locally; CI also runs fetch.sh before path-1/path-2 lanes.
