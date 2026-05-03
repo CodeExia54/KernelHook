@@ -29,11 +29,11 @@
 #include <symbol.h>
 #include "kernelhook/kh_ksu_blob.h"
 #include "kernelhook/kh_ksu_load.h"
+#include "kernelhook/kh_call_init_module.h"
 
 /* fat.ko's pending-blob global; defined in fat_main.c. */
 extern struct kh_pending_blob kh_pending_ksu_blob;
 
-typedef int  (*load_module_fn_t)(void *umod, unsigned long len, const char *uargs);
 typedef void (*vfree_fn_t)(const void *addr);
 
 /* enum system_states value from include/linux/kernel.h, stable since 2.6.x.
@@ -50,29 +50,33 @@ static void         *ksu_late_target = NULL;
 
 static void do_load_ksu_now(void)
 {
-	load_module_fn_t load_module_fn;
-	vfree_fn_t       vfree_fn;
-	int              rc;
+	vfree_fn_t vfree_fn;
+	int        rc;
 
 	if (kh_pending_ksu_blob.len == 0 || !kh_pending_ksu_blob.data) {
 		pr_info("kh: ksu: nothing to load\n");
 		return;
 	}
 
-	load_module_fn = (load_module_fn_t)ksyms_lookup("load_module");
-	if (!load_module_fn) {
-		pr_err("kh: ksu: load_module symbol not resolvable; aborting load\n");
-		goto release_blob;
-	}
-
-	rc = load_module_fn(kh_pending_ksu_blob.data,
-	                    kh_pending_ksu_blob.len, "");
+	/* kh_call_init_module stages the bytes through user-VA in the
+	 * caller's mm before invoking __do_sys_init_module — see
+	 * include/kernelhook/kh_call_init_module.h.
+	 *
+	 * Hot path (called from fat.ko's kh_init in modprobe context):
+	 *   current->mm is valid, so vm_mmap succeeds and load proceeds.
+	 *
+	 * Cold path (called from run_init_process_pre hook before
+	 * kernel_execve hands kernel_init its first user mm): vm_mmap
+	 * returns -EINVAL, we log "kh: load: vm_mmap(payload, ...) failed"
+	 * and bail. The blob is still vfree'd below — same behavior the
+	 * old broken load_module_fn path had on lookup failure. */
+	rc = kh_call_init_module(kh_pending_ksu_blob.data,
+	                         kh_pending_ksu_blob.len, "");
 	if (rc < 0)
-		pr_err("kh: ksu: load_module returned %d\n", rc);
+		pr_err("kh: ksu: kh_call_init_module returned %d\n", rc);
 	else
 		pr_info("kh: ksu: loaded\n");
 
-release_blob:
 	/* Free the blob regardless of load outcome. On success the kernel
 	 * has copied the bytes into its own module memory; on failure we
 	 * have nothing to retry with anyway. */
