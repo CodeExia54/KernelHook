@@ -108,6 +108,19 @@ SECTIONS
         __stop___kh_strategies = .;
     }
 
+    /* Fat-link consumer registry — iterated via __start_kh_consumer_table /
+       __stop_kh_consumer_table at module init by src/fat_main.c (Task 3.1).
+       Same anchor pattern as .kh_strategies above; lds explicitly emits
+       the bracketing symbols because the kernel module loader does NOT
+       synthesise __start_/__stop_<sec> for relocatable .ko output (only
+       vmlinux's static link does). KEEP prevents --gc-sections from
+       dropping consumer entries that are only reached via the anchors. */
+    kh_consumer_table : ALIGN(8) {
+        __start_kh_consumer_table = .;
+        KEEP(*(kh_consumer_table))
+        __stop_kh_consumer_table = .;
+    }
+
     .bss : {
         *(.bss .bss.*)
     }

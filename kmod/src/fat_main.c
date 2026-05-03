@@ -47,32 +47,29 @@ void kernelhook_exit(void);
  * costs stack space at module load. */
 #define KH_MAX_CONSUMERS 32
 
-/* Section anchor symbols. The .kh_consumer_table section sits between
- * the start/end via lexicographic ordering during link:
- *   .kh_consumer_table_start < .kh_consumer_table < .kh_consumer_table_end
- *
- * The anchor symbol names match the static [] arrays defined below. We
- * forward-declare them here as extern so the dispatcher can compute the
- * pointer-difference range. */
-extern const struct kh_consumer_entry __kh_consumer_table_start_anchor[];
-extern const struct kh_consumer_entry __kh_consumer_table_end_anchor[];
+/* Linker-emitted bounds for the `kh_consumer_table` section. Because
+ * the section name is a valid C identifier (no leading dot), ld and
+ * lld synthesise these two symbols pointing at the real start/end of
+ * the merged section in module memory. This is the standard Linux
+ * idiom (e.g. __start_kh_strategies in built-in modules); it's the
+ * only portable way to bracket a section that has been allocated by
+ * the kernel module loader. */
+extern const struct kh_consumer_entry __start_kh_consumer_table[];
+extern const struct kh_consumer_entry __stop_kh_consumer_table[];
 
 /* Aliases used in dispatcher math. */
-#define __kh_consumer_table_start __kh_consumer_table_start_anchor
-#define __kh_consumer_table_end   __kh_consumer_table_end_anchor
+#define __kh_consumer_table_start __start_kh_consumer_table
+#define __kh_consumer_table_end   __stop_kh_consumer_table
 
 /* In-module global owner of the pending KSU blob. Real wiring (sysfs +
  * try_load_ksu) lands in Task 5.3; for now the symbol exists so the
  * header declaration resolves. */
 struct kh_pending_blob kh_pending_ksu_blob;
 
-/* Anchors. Lexicographic section sort ensures the layout above.
- * Non-static so the extern decls above can resolve to them — `static`
- * gives them internal linkage and the extern would fail to bind. */
-const struct kh_consumer_entry __kh_consumer_table_start_anchor[]
-    __attribute__((used, section(".kh_consumer_table_start"))) = {};
-const struct kh_consumer_entry __kh_consumer_table_end_anchor[]
-    __attribute__((used, section(".kh_consumer_table_end"))) = {};
+/* No explicit anchor arrays needed — the linker provides
+ * __start_kh_consumer_table / __stop_kh_consumer_table from the
+ * `kh_consumer_table` section name (must be a valid C identifier).
+ * The dispatcher uses the typedef'd aliases above. */
 
 /* Hand-rolled insertion sort over a fixed-size stack copy. n <= KH_MAX_CONSUMERS.
  * Stable; ascending by priority. Pure C — no <linux/sort.h> dependency. */

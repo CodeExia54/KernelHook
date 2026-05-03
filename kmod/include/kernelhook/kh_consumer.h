@@ -28,9 +28,18 @@ struct kh_consumer_entry {
 #define KH_PRIO_LATE    900
 
 #ifdef KH_FAT_LINK
+  /* Section name `kh_consumer_table` (no leading `.`) is a deliberate
+   * choice: the linker automatically emits __start_kh_consumer_table /
+   * __stop_kh_consumer_table symbols only when the section name is a
+   * valid C identifier. Anchor arrays in separate `.foo_start` /
+   * `.foo_end` sections do NOT bracket `.foo` after the kernel module
+   * loader's per-section memory allocation — every section gets its
+   * own ALLOC region, so pointer arithmetic across them is meaningless.
+   * `__start_/__stop_` symbols are linker-emitted at the actual section
+   * bounds, post-allocation, which is what we want. */
   #define kh_consumer_register(name_str, init_fn, exit_fn, prio)                 \
       static const struct kh_consumer_entry __kh_consumer_##init_fn               \
-      __attribute__((used, section(".kh_consumer_table"))) = {                    \
+      __attribute__((used, section("kh_consumer_table"))) = {                     \
           .init = (init_fn), .exit = (exit_fn),                                   \
           .priority = (prio), .name = (name_str),                                 \
       }

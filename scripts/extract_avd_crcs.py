@@ -26,7 +26,14 @@ def decompress_kernel(path):
 
 
 def adb(serial, cmd):
-    r = subprocess.run(['adb', '-s', serial, 'shell', cmd],
+    # Wrap in `su 0 sh -c '...'` so privileged operations (kptr_restrict
+    # toggle + reading /proc/kallsyms after that toggle) work on AVDs
+    # where `adb root` is denied (Pixel_31..34 production GKI images)
+    # but the system image ships a Magisk-style su binary.
+    # Single-quote escape: each `'` in the original becomes `'"'"'`.
+    escaped = cmd.replace("'", """'"'"'""")
+    wrapped = "su 0 sh -c '%s'" % escaped
+    r = subprocess.run(['adb', '-s', serial, 'shell', wrapped],
                        capture_output=True, text=True, timeout=10)
     return r.stdout.strip()
 
@@ -56,25 +63,52 @@ def _resolve_android_sdk():
 
 
 def find_kernel_for_avd(serial):
-    """Find host-side kernel-ranchu matching the running AVD."""
+    """Find host-side kernel-ranchu matching the running AVD.
+
+    Algorithm: collect every arm64-v8a kernel-ranchu under the SDK's
+    system-images/ tree, decompress each, and check whether the FULL
+    device release string (`uname -r`) appears as a contiguous run of
+    bytes inside the kernel image. Return the first exact match.
+
+    The previous implementation sorted entries reverse-alphabetically
+    which made `android-36.1` win over `android-31` for a 5.10.110-
+    android12 device — short substrings (`5.10.110`) accidentally hit
+    inside other images' compressed data. We now require the device
+    release suffix (`-android12-9-...-ab8731800`) which is unique
+    enough to rule that out, and we don't bias the search order.
+    """
     sdk = _resolve_android_sdk()
     if not sdk:
         return None, None
 
-    device_release = adb(serial, 'uname -r')
+    device_release = adb(serial, 'uname -r').strip()
+    if not device_release:
+        return None, None
 
-    # Search all system-images directories for matching kernel
+    needle = device_release.encode()
     sysimg_dir = f'{sdk}/system-images'
-    if os.path.isdir(sysimg_dir):
-        for entry in sorted(os.listdir(sysimg_dir), reverse=True):
-            for variant in ['google_apis', 'google_apis_playstore',
-                            'google_apis_ps16k', 'default']:
-                path = f'{sysimg_dir}/{entry}/{variant}/arm64-v8a/kernel-ranchu'
-                if not os.path.exists(path):
-                    continue
-                data = decompress_kernel(path)
-                if device_release.encode() in data:
-                    return path, data
+    if not os.path.isdir(sysimg_dir):
+        return None, None
+
+    # Collect candidate paths first so we can iterate deterministically
+    # without leaking the iteration order into the match decision.
+    candidates = []
+    for entry in sorted(os.listdir(sysimg_dir)):
+        for variant in ['google_apis', 'google_apis_playstore',
+                        'google_apis_ps16k', 'default']:
+            path = f'{sysimg_dir}/{entry}/{variant}/arm64-v8a/kernel-ranchu'
+            if os.path.exists(path):
+                candidates.append(path)
+
+    for path in candidates:
+        data = decompress_kernel(path)
+        # Full device-release string must appear verbatim in the kernel
+        # image (kallsyms / version banner). Substring of just the
+        # major.minor would match too many images; the device suffix
+        # (-androidN-...) is what gives us a unique hit.
+        if needle in data:
+            return path, data
+
     return None, None
 
 
