@@ -1,0 +1,146 @@
+# SPDX-License-Identifier: GPL-2.0-or-later
+# AVD-based path-1 / path-2 e2e tests.
+#
+# Three jobs run in parallel:
+#   - foundation-host:   pure host build (CMake ctest + khtools test_image_inject
+#                        + fixtures/ksu_lkm/fetch.sh idempotency)
+#   - foundation-kmod:   freestanding kmod build (standalone + KH_FAT_LINK fat.ko)
+#                        + khimg freestanding build
+#   - avd-path1-matrix:  the show-kernel based path-1 e2e across the AVD matrix.
+#                        Each Pixel_NN row builds fat.ko once with the chosen
+#                        consumer set, boots the AVD, runs khinsmod, and asserts
+#                        the consumer marker appears in the kernel console.
+#
+# A path-2 lane is staged (commented out) until the AVD-side offline kernel-image
+# swap helper lands (scripts/test_avd_path2.sh currently exits 4 NOT_IMPLEMENTED
+# at the boot.img-pull step).
+#
+# The matrix lanes are gated on HAS_AVD_RUNNER repo variable so forks without
+# the configured runner don't see false failures.
+
+name: avd-tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'kmod/**'
+      - 'khimg/**'
+      - 'khtools/**'
+      - 'khinsmod/**'
+      - 'kh_strategies/**'
+      - 'src/**'
+      - 'include/**'
+      - 'scripts/test_avd_path1.sh'
+      - 'scripts/test_avd_path2.sh'
+      - 'scripts/lib/avd_console.sh'
+      - 'scripts/ci/**'
+      - 'khtools/fixtures/ksu_lkm/**'
+      - '.github/workflows/avd-tests.yml'
+  pull_request:
+    paths:
+      - 'kmod/**'
+      - 'khimg/**'
+      - 'khtools/**'
+      - 'khinsmod/**'
+      - 'kh_strategies/**'
+      - 'src/**'
+      - 'include/**'
+      - 'scripts/test_avd_path1.sh'
+      - 'scripts/test_avd_path2.sh'
+      - 'scripts/lib/avd_console.sh'
+      - 'scripts/ci/**'
+      - 'khtools/fixtures/ksu_lkm/**'
+      - '.github/workflows/avd-tests.yml'
+  workflow_dispatch:
+
+jobs:
+  foundation-host:
+    name: foundation host build (CMake + ctest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: configure
+        run: cmake -S . -B build_debug -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+      - name: build
+        run: cmake --build build_debug -j$(nproc)
+      - name: ctest
+        run: ctest --test-dir build_debug --output-on-failure
+      - name: ksu fixture fetch idempotency
+        run: |
+          ./khtools/fixtures/ksu_lkm/fetch.sh
+          ./khtools/fixtures/ksu_lkm/fetch.sh   # second run must be no-op
+        # Validates MANIFEST.txt parser + sha256 verification round-trip.
+
+  foundation-kmod:
+    name: foundation kmod + khimg build (freestanding)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: install ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27c
+      - name: kmod standalone
+        run: make -C kmod module
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_NDK_HOME }}
+      - name: kmod fat-link
+        run: |
+          make -C kmod clean
+          make -C kmod module KH_FAT_LINK=1 KH_MODULES=khm,apd,supercall
+          file kmod/kernelhook.ko
+      - name: kmod multi-layout
+        run: |
+          make -C kmod clean
+          make -C kmod module-dual KH_FAT_LINK=1 KH_MODULES=khm,apd,supercall
+          ls -la kmod/kernelhook-*.ko
+      - name: khimg
+        run: |
+          make -C khimg
+          file khimg/khimg
+
+  avd-path1-matrix:
+    name: avd path-1 (${{ matrix.avd }})
+    if: vars.HAS_AVD_RUNNER == 'true'
+    runs-on: macos-13   # ReactiveCircus emulator-runner needs hw accel; macOS hosted runners support nested virt.
+    strategy:
+      fail-fast: false
+      matrix:
+        avd:
+          - Pixel_28
+          - Pixel_29
+          - Pixel_30
+          - Pixel_31
+          - Pixel_32
+          - Pixel_33
+          - Pixel_34
+          - Pixel_35
+          - Pixel_36_1
+          - Pixel_37
+        consumers:
+          - khm
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '17' }
+      - name: configure host build (for khtools binary used by some smoke setups)
+        run: cmake -S . -B build_debug -DCMAKE_BUILD_TYPE=Debug && cmake --build build_debug -j$(sysctl -n hw.ncpu)
+      - name: install ndk
+        uses: nttld/setup-ndk@v1
+        with:
+          ndk-version: r27c
+      - name: build android side
+        run: ./scripts/run_android_tests.sh build-only
+      - name: avd path-1 e2e
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 31  # placeholder; matrix.avd would map to per-row API
+          script: ./scripts/test_avd_path1.sh ${{ matrix.avd }} ${{ matrix.consumers }}
+
+  # avd-path2-matrix:
+  #   Staged. Enable once scripts/test_avd_path2.sh stops returning rc=4 at
+  #   the boot.img-pull step (next deferred chunk: AVD-side offline kernel
+  #   image swap helper). Same shape as avd-path1-matrix above with
+  #   `./scripts/test_avd_path2.sh`. Use a smaller matrix until validated:
+  #     avd: [Pixel_31, Pixel_36_1, Pixel_37]
