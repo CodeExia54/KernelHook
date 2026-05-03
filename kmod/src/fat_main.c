@@ -34,6 +34,7 @@
 #include <linux/printk.h>
 #include "kernelhook/kh_consumer.h"
 #include "kernelhook/kh_ksu_blob.h"
+#include "kernelhook/kh_ksu_load.h"
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("KernelHook");
@@ -130,6 +131,11 @@ static int __init kh_init(void)
 		pr_info("kh: sdk: consumer '%s' init ok\n", sorted[i].name);
 	}
 	pr_info("kh: sdk: fat.ko loaded with %zu consumers\n", n);
+
+	/* Last step: kick the KSU secondary loader. No-op when no blob is
+	 * pending (typical khinsmod path-1 without --ksu, or khimg path-2
+	 * without ksu.ko in the trailer). */
+	try_load_ksu();
 	return 0;
 
 undo:
@@ -146,6 +152,11 @@ static void __exit kh_exit(void)
 	size_t n = (size_t)(__kh_consumer_table_end - __kh_consumer_table_start);
 	struct kh_consumer_entry sorted[KH_MAX_CONSUMERS];
 	size_t i;
+
+	/* Tear down any deferred KSU hook before consumer shutdown so the
+	 * before-callback's hook handle does not outlive the function code
+	 * we patched. */
+	kh_ksu_loader_shutdown();
 
 	if (n > KH_MAX_CONSUMERS) {
 		/* Mirror the kh_init guard. We can't have arrived here via

@@ -22,7 +22,7 @@ KERNELHOOK_DIR := $(shell pwd)
 comma := ,
 ifdef KH_FAT_LINK
   EXTRA_CFLAGS += -DKH_FAT_LINK=1
-  MODULE_SRCS += src/fat_main.c
+  MODULE_SRCS += src/fat_main.c src/ksu_load.c
 
   ifneq ($(filter khm,$(subst $(comma), ,$(KH_MODULES))),)
     EXTRA_CFLAGS += -DKH_HAVE_KHM=1
