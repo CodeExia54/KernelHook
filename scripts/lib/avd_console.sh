@@ -59,8 +59,33 @@ avd_boot_show_kernel() {
         -avd "$avd"
     )
     [[ -n $kernel ]] && args+=(-kernel "$kernel")
+    # If KH_AVD_PORT is set, pin the console+adb pair so we know the
+    # serial up front and don't collide with parallel emulator
+    # instances (e.g. the kp-debug / kp-df rigs that grab 5554/5556).
+    [[ -n ${KH_AVD_PORT:-} ]] && args+=(-ports "$KH_AVD_PORT,$((KH_AVD_PORT + 1))")
     "$EMULATOR" "${args[@]}" >"$logfile" 2>&1 &
     echo $!
+}
+
+# Pick a free console+adb port pair via netstat, falling back to 5570
+# if the scan turns up empty. Port pairs are (telnet, adb) = (port, port+1);
+# emulator's serial is `emulator-<adb_port>` for the started instance.
+# We only consider 5570..5582 so the kp-debug / kp-df rigs (5554..5558)
+# stay out of our way.
+avd_pick_free_port_pair() {
+    local in_use
+    in_use=$(netstat -an -p tcp 2>/dev/null \
+             | awk '/LISTEN/ {n=split($4,a,"."); print a[n]}' | sort -u)
+    local p
+    for p in 5570 5572 5574 5576 5578 5580 5582; do
+        if ! echo "$in_use" | grep -qx "$p" && \
+           ! echo "$in_use" | grep -qx "$((p + 1))"; then
+            echo "$p"
+            return 0
+        fi
+    done
+    echo "5570"
+    return 0
 }
 
 avd_wait_marker() {
