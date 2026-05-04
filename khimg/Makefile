@@ -27,9 +27,9 @@ ASFLAGS := -Wall -fno-builtin -std=gnu11 \
            -fno-common -O2 -target aarch64-linux-gnu
 INCLUDE := -Iinclude -Isrc -I$(KH_ROOT)/include
 
-SRCS_C := src/setup.c src/start.c src/kh_load.c \
+SRCS_C := src/setup.c src/start.c src/kh_load.c src/kh_lkm_load.c \
           src/tlsf.c src/baselib.c src/sha256.c src/map.c
-SRCS_S := src/setup1.S src/cache.S src/map1.S
+SRCS_S := src/setup1.S src/cache.S src/map1.S src/kh_lkm_hook.S
 OBJS_C := $(SRCS_C:.c=.o)
 OBJS_S := $(SRCS_S:.S=.o)
 OBJS   := $(OBJS_C) $(OBJS_S)
