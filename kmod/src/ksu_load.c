@@ -34,7 +34,107 @@
 /* fat.ko's pending-blob global; defined in fat_main.c. */
 extern struct kh_pending_blob kh_pending_ksu_blob;
 
-typedef void (*vfree_fn_t)(const void *addr);
+typedef void  (*vfree_fn_t)(const void *addr);
+typedef void *(*vmalloc_fn_t)(unsigned long size);
+typedef void *(*filp_open_fn_t)(const char *filename, int flags, unsigned short mode);
+typedef int   (*filp_close_fn_t)(void *filp, void *id);
+typedef long  (*kernel_read_fn_t)(void *file, void *buf, unsigned long count, long long *pos);
+
+/* O_RDONLY / S_IRUSR octals — freestanding shim doesn't define them. */
+#define KH_O_RDONLY 0x0000
+#define KH_S_IRUSR  0400
+
+/* Maximum LKM size we'll accept on the path-1 file ingest. KSU v3.2.4
+ * is ~600 KiB; cap at 4 MiB so a malformed path can't OOM the kernel. */
+#define KH_KSU_MAX_LEN (4UL * 1024 * 1024)
+
+KCFI_EXEMPT
+int kh_stage_ksu_from_path(const char *path)
+{
+	filp_open_fn_t   filp_open_fn;
+	filp_close_fn_t  filp_close_fn;
+	kernel_read_fn_t kernel_read_fn;
+	vmalloc_fn_t     vmalloc_fn;
+	vfree_fn_t       vfree_fn;
+	void            *filp;
+	void            *buf       = NULL;
+	long long        pos       = 0;
+	long             total     = 0;
+	long             rd;
+
+	if (!path || !*path)
+		return -22; /* -EINVAL */
+
+	if (kh_pending_ksu_blob.len != 0 || kh_pending_ksu_blob.data) {
+		pr_err("kh: ksu: pending blob already populated; path ingest skipped\n");
+		return -16; /* -EBUSY */
+	}
+
+	filp_open_fn   = (filp_open_fn_t)ksyms_lookup("filp_open");
+	filp_close_fn  = (filp_close_fn_t)ksyms_lookup("filp_close");
+	kernel_read_fn = (kernel_read_fn_t)ksyms_lookup("kernel_read");
+	vmalloc_fn     = (vmalloc_fn_t)ksyms_lookup("vmalloc");
+	vfree_fn       = (vfree_fn_t)ksyms_lookup("vfree");
+	if (!filp_open_fn || !filp_close_fn || !kernel_read_fn ||
+	    !vmalloc_fn || !vfree_fn) {
+		pr_err("kh: ksu: file-ingest ksyms missing\n");
+		return -38; /* -ENOSYS */
+	}
+
+	filp = filp_open_fn(path, KH_O_RDONLY, 0);
+	/* IS_ERR check: filp_open returns ERR_PTR on failure. */
+	if ((unsigned long)filp >= (unsigned long)-4095) {
+		pr_err("kh: ksu: filp_open('%s') failed: %ld\n",
+		       path, (long)(unsigned long)filp);
+		return (int)(long)(unsigned long)filp;
+	}
+
+	/* Read in 64 KiB chunks. We don't know the file size upfront
+	 * without parsing struct file (kernel_file_get_size isn't
+	 * exported; vfs_getattr layout drifts). Fixed step + cap. */
+	buf = vmalloc_fn(KH_KSU_MAX_LEN);
+	if (!buf) {
+		pr_err("kh: ksu: vmalloc(%lu) failed\n", KH_KSU_MAX_LEN);
+		filp_close_fn(filp, NULL);
+		return -12; /* -ENOMEM */
+	}
+
+	for (;;) {
+		unsigned long want = 64UL * 1024;
+		if ((unsigned long)total + want > KH_KSU_MAX_LEN)
+			want = KH_KSU_MAX_LEN - (unsigned long)total;
+		if (want == 0) {
+			pr_err("kh: ksu: file '%s' exceeds %lu byte cap\n",
+			       path, KH_KSU_MAX_LEN);
+			vfree_fn(buf);
+			filp_close_fn(filp, NULL);
+			return -27; /* -EFBIG */
+		}
+		rd = kernel_read_fn(filp, (char *)buf + total, want, &pos);
+		if (rd < 0) {
+			pr_err("kh: ksu: kernel_read('%s') at %ld returned %ld\n",
+			       path, total, rd);
+			vfree_fn(buf);
+			filp_close_fn(filp, NULL);
+			return (int)rd;
+		}
+		if (rd == 0) break; /* EOF */
+		total += rd;
+	}
+
+	filp_close_fn(filp, NULL);
+
+	if (total <= 0) {
+		pr_err("kh: ksu: file '%s' is empty\n", path);
+		vfree_fn(buf);
+		return -22;
+	}
+
+	kh_pending_ksu_blob.data = buf;
+	kh_pending_ksu_blob.len  = (unsigned long)total;
+	pr_info("kh: ksu: staged %ld bytes from %s\n", total, path);
+	return 0;
+}
 
 /* enum system_states value from include/linux/kernel.h, stable since 2.6.x.
  * We compare against the resolved system_state global; the freestanding

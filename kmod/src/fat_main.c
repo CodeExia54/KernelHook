@@ -62,10 +62,27 @@ extern const struct kh_consumer_entry __stop_kh_consumer_table[];
 #define __kh_consumer_table_start __start_kh_consumer_table
 #define __kh_consumer_table_end   __stop_kh_consumer_table
 
-/* In-module global owner of the pending KSU blob. Real wiring (sysfs +
- * try_load_ksu) lands in Task 5.3; for now the symbol exists so the
- * header declaration resolves. */
+/* In-module global owner of the pending KSU blob. Populated either by
+ * ksu_path module_param (file ingest in kh_init below) or by the
+ * khimg blob trailer when path-2 lands the bytes pre-init.
+ *
+ * Path-2 sysfs (/sys/kernel/kh/pending_ksu) was the original design
+ * but cross-version struct bin_attribute layout drift makes that
+ * untenable in the freestanding shim — see PATH1_KSU_SURFACE_BLOCKER.md.
+ * The replacement is finit_module(2) args: khinsmod passes
+ * `args = "ksu_path=/data/local/tmp/kernelsu.ko"` and the kernel
+ * sets ksu_path before module_init runs, so kh_init can simply
+ * filp_open + kernel_read in modprobe's process context. */
 struct kh_pending_blob kh_pending_ksu_blob;
+
+/* Module parameter: KSU LKM path to ingest before consumer dispatch.
+ * Empty / NULL means "no KSU injection requested". */
+static const char *ksu_path;
+module_param(ksu_path, charp, 0);
+MODULE_PARM_DESC(ksu_path,
+	"Path to a KernelSU .ko to load after fat.ko's consumers come up. "
+	"Replaces the deferred /sys/kernel/kh/pending_ksu sysfs surface "
+	"with a one-shot file ingest in fat.ko's module_init context.");
 
 /* No explicit anchor arrays needed — the linker provides
  * __start_kh_consumer_table / __stop_kh_consumer_table from the
@@ -132,9 +149,19 @@ static int __init kh_init(void)
 	}
 	pr_info("kh: sdk: fat.ko loaded with %zu consumers\n", n);
 
-	/* Last step: kick the KSU secondary loader. No-op when no blob is
-	 * pending (typical khinsmod path-1 without --ksu, or khimg path-2
-	 * without ksu.ko in the trailer). */
+	/* If khinsmod passed ksu_path=..., ingest the file now. Failure to
+	 * ingest is logged but does not gate fat.ko itself — the KSU
+	 * injection is best-effort, fat.ko's consumers stay armed. */
+	if (ksu_path && ksu_path[0]) {
+		int ingest_rc = kh_stage_ksu_from_path(ksu_path);
+		if (ingest_rc < 0)
+			pr_err("kh: sdk: ksu_path ingest failed: %d "
+			       "(KSU injection skipped)\n", ingest_rc);
+	}
+
+	/* Kick the KSU secondary loader. No-op when no blob is pending
+	 * (typical khinsmod path-1 without --ksu, ingest failure above,
+	 * or khimg path-2 without ksu.ko in the trailer). */
 	try_load_ksu();
 	return 0;
 

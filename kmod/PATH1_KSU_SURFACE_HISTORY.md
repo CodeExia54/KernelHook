@@ -1,4 +1,13 @@
-# `/sys/kernel/kh/pending_ksu` 表面 BLOCKER 报告 / Surface BLOCKER report
+# `/sys/kernel/kh/pending_ksu` 表面历史记录 / Surface design history
+
+> **STATUS — 2026-05-04**: RESOLVED via `finit_module(2)` args. 详情见
+> `kmod/src/fat_main.c` 的 `ksu_path` module_param + `kh_stage_ksu_from_path()`
+> in `kmod/src/ksu_load.c`. khinsmod 现在把 KSU LKM 路径作为 `args`
+> 传给 `finit_module`，fat.ko 在 module_init 上下文做 `filp_open + kernel_read`
+> 把字节灌进 `kh_pending_ksu_blob`，再走 `kh_call_init_module()`
+> (vm_mmap + copy_to_user + `__do_sys_init_module`) 实际加载。
+> 跨 GKI 5.10–6.12 不需要任何 sysfs/chrdev/procfs struct layout shim。
+> 本文档保留作为设计选型记录。
 
 > **TL;DR (中文):** path-1 KSU 注入入口 `/sys/kernel/kh/pending_ksu`（khinsmod 源码已经在写）当前**没有内核侧实现**。Foundation v1 计划里 Task 5.3 把它标 deferred，原因是 `struct bin_attribute` 在 GKI 5.10 / 6.1 / 6.6 三个布局之间字段重排（特别是 6.7 在 read 之前插了 `f_mapping`），freestanding shim 没有可移植的方式声明这个结构，写错一个 8 字节就会 corrupt 别人的 kobject。chrdev / procfs 替代路线撞同款 `struct file_operations` 跨版本字段重排问题。本会话决定**和 KP loader 一起 defer**，因为：（1）即使表面打通，`load_module_fn` 在 modern GKI 仍然 `-ENOEXEC`（subagent 的 `kmod/loader/BLOCKER.md` 已论证）；（2）path-1 KSU 真要落地走的是已有的 `tools/kmod_loader + graft` 路线，那条路无 sysfs 依赖。
 >

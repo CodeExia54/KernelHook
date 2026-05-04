@@ -126,7 +126,30 @@ int main(int argc, char **argv) {
         fprintf(stderr, "kh: insmod: open '%s' failed: %s\n", ko_path, strerror(errno));
         return 7;
     }
-    int rc = sys_finit_module(fd, "", 0);
+
+    /* Path-1 KSU injection: pass the KSU LKM path as a finit_module(2)
+     * arg. fat.ko's `ksu_path` module_param picks it up and ingests
+     * the file via filp_open + kernel_read in module_init context.
+     *
+     * Replaces the v0 /sys/kernel/kh/pending_ksu sysfs surface, which
+     * was deferred per kmod/PATH1_KSU_SURFACE_BLOCKER.md (struct
+     * bin_attribute layout drifts across GKI versions). The args
+     * approach is layout-agnostic — module_param parsing is the
+     * kernel's job, not ours. */
+    char args_buf[1024];
+    args_buf[0] = '\0';
+    if (ksu_path) {
+        int written = snprintf(args_buf, sizeof(args_buf),
+                               "ksu_path=%s", ksu_path);
+        if (written < 0 || (size_t)written >= sizeof(args_buf)) {
+            fprintf(stderr,
+                    "kh: insmod: ksu_path too long for finit_module args buffer\n");
+            close(fd);
+            return 7;
+        }
+    }
+
+    int rc = sys_finit_module(fd, args_buf, 0);
     int saved_errno = errno;
     close(fd);
     if (rc != 0) {
@@ -136,44 +159,7 @@ int main(int argc, char **argv) {
         return 7;
     }
 
-    if (ksu_path) {
-        int sysfs_fd = open("/sys/kernel/kh/pending_ksu", O_WRONLY);
-        if (sysfs_fd < 0) {
-            /* fat.ko loaded but the user-requested KSU injection cannot be
-             * honored. Return 7 so callers don't assume KSU was injected.
-             * fat.ko itself remains loaded (no rollback). */
-            fprintf(stderr,
-                    "kh: insmod: cannot open /sys/kernel/kh/pending_ksu (%s); "
-                    "fat.ko loaded but --ksu request was NOT honored\n",
-                    strerror(errno));
-            return 7;
-        } else {
-            int ksu_fd = open(ksu_path, O_RDONLY);
-            if (ksu_fd < 0) {
-                fprintf(stderr, "kh: insmod: open '%s' failed: %s\n",
-                        ksu_path, strerror(errno));
-                close(sysfs_fd);
-                return 7;
-            }
-            char buf[8192];
-            ssize_t n;
-            while ((n = read(ksu_fd, buf, sizeof(buf))) > 0) {
-                ssize_t off = 0;
-                while (off < n) {
-                    ssize_t w = write(sysfs_fd, buf + off, (size_t)(n - off));
-                    if (w < 0) {
-                        fprintf(stderr, "kh: insmod: write to pending_ksu failed: %s\n",
-                                strerror(errno));
-                        close(ksu_fd); close(sysfs_fd);
-                        return 7;
-                    }
-                    off += w;
-                }
-            }
-            close(ksu_fd);
-            close(sysfs_fd);
-        }
-    }
-    fprintf(stderr, "kh: insmod: fat.ko loaded\n");
+    fprintf(stderr, "kh: insmod: fat.ko loaded%s\n",
+            ksu_path ? " (with ksu_path arg)" : "");
     return 0;
 }

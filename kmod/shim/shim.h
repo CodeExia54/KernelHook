@@ -139,14 +139,63 @@ static const struct kernel_param_ops __kmod_param_ops_ulong = {
     .free = (void (*)(void *))0,
 };
 
+/* int parser — same numeric parsing as ulong, narrowed to 4 bytes.
+ * Pre-existing module_param(name, int, ...) callers (log_level,
+ * kh_consistency_check) used to silently route through the ulong
+ * setter, which 8-byte-wrote into a 4-byte int slot. This dedicated
+ * setter prevents that overrun. */
+static int __kmod_param_set_int(const char *val, const struct kernel_param *kp)
+{
+    long sign = 1;
+    if (*val == '-') { sign = -1; val++; }
+    unsigned long u = 0;
+    long r = 0;
+    if (__kmod_param_set_ulong(val, &(struct kernel_param){
+        .name = kp->name, .ops = kp->ops, .arg = &u
+    }) == 0) {
+        r = sign * (long)u;
+    }
+    *(int *)kp->arg = (int)r;
+    return 0;
+}
+
+/* charp parser — points the *char slot at the kernel-supplied raw
+ * string. Kernel guarantees args strings are stable for the module's
+ * lifetime. */
+static int __kmod_param_set_charp(const char *val, const struct kernel_param *kp)
+{
+    *(const char **)kp->arg = val;
+    return 0;
+}
+
+static const struct kernel_param_ops __kmod_param_ops_int = {
+    .flags = 0,
+    .set = __kmod_param_set_int,
+    .get = (param_get_fn)0,
+    .free = (void (*)(void *))0,
+};
+
+static const struct kernel_param_ops __kmod_param_ops_charp = {
+    .flags = 0,
+    .set = __kmod_param_set_charp,
+    .get = (param_get_fn)0,
+    .free = (void (*)(void *))0,
+};
+
+/* Token-pasted ops selector so module_param(name, T, ...) picks
+ * the right setter at compile time. Add new types here. */
+#define __KMOD_PARAM_OPS_ulong  (&__kmod_param_ops_ulong)
+#define __KMOD_PARAM_OPS_int    (&__kmod_param_ops_int)
+#define __KMOD_PARAM_OPS_charp  (&__kmod_param_ops_charp)
+
 /* Helper macro to avoid C preprocessor expanding `name` in `.name = ...` */
-#define __KMOD_PARAM(var_name, str_name, perm_val)                      \
+#define __KMOD_PARAM(var_name, str_name, ops_val, perm_val)             \
     static const struct kernel_param __param_##var_name                  \
         __used __aligned(sizeof(void *))                                \
         __section("__param") = {                                        \
             .name = str_name,                                           \
             .mod = (struct module *)0,                                  \
-            .ops = &__kmod_param_ops_ulong,                             \
+            .ops = (ops_val),                                           \
             .perm = (perm_val),                                         \
             .level = -1,                                                \
             .flags = 0,                                                 \
@@ -155,7 +204,7 @@ static const struct kernel_param_ops __kmod_param_ops_ulong = {
 
 #define module_param(name, type, perm)                                  \
     __MODULE_INFO(parmtype, name##type, #name ":" #type);               \
-    __KMOD_PARAM(name, #name, perm)
+    __KMOD_PARAM(name, #name, __KMOD_PARAM_OPS_##type, perm)
 
 /* module_param_named(exposed_name, var, type, perm) — exposes `var` to
  * userspace under a different parameter name. Freestanding: like module_param
@@ -165,7 +214,7 @@ static const struct kernel_param_ops __kmod_param_ops_ulong = {
  * setter regardless of `type` (see the caveat on module_param above). */
 #define module_param_named(exposed_name, var, type, perm)                  \
     __MODULE_INFO(parmtype, var##type, #exposed_name ":" #type);           \
-    __KMOD_PARAM(var, #exposed_name, perm)
+    __KMOD_PARAM(var, #exposed_name, __KMOD_PARAM_OPS_##type, perm)
 
 /* ---- Kernel PAGE_SIZE ---- */
 #ifndef PAGE_SIZE

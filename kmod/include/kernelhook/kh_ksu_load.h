@@ -34,4 +34,19 @@ void try_load_ksu(void);
  * it was armed and never fired. */
 void kh_ksu_loader_shutdown(void);
 
+/* path-1 file-based ingestion: open `path` via filp_open, read the
+ * full file into a vmalloc'd buffer, and populate kh_pending_ksu_blob.
+ * Triggered by fat.ko's `ksu_path` module_param when khinsmod passes
+ * `args = "ksu_path=/data/local/tmp/kernelsu.ko"` to finit_module.
+ *
+ * Returns 0 on success (blob populated; caller must NOT free the
+ * buffer — try_load_ksu / do_load_ksu_now own it from here on),
+ * negative errno on failure (blob untouched).
+ *
+ * Caller invariants:
+ *   - Runs in fat.ko module_init context, i.e. modprobe/insmod
+ *     process context where filp_open + kernel_read are safe.
+ *   - Path must be readable by the modprobe caller's credentials. */
+int kh_stage_ksu_from_path(const char *path);
+
 #endif /* KERNELHOOK_KH_KSU_LOAD_H */

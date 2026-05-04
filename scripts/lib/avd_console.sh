@@ -44,7 +44,20 @@ avd_boot_show_kernel() {
         echo "avd_boot_show_kernel: \$EMULATOR not executable: $EMULATOR" >&2
         return 1
     fi
-    local args=(-no-window -show-kernel -avd "$avd")
+    # The flag set below is the one the parallel KP test rigs use and
+    # is the only combo that boots Pixel_31..37 reliably on macOS 26 +
+    # emulator 36.5.x. Plain `-no-window -show-kernel` hangs in the
+    # QEMU2 main loop. Specifically:
+    #   -no-snapshot-save / -no-snapshot-load — full cold boot
+    #   -no-audio / -no-boot-anim — drops drivers that race on macOS 26
+    #   -gpu swiftshader_indirect — software GPU (HVF GL path is broken)
+    local args=(
+        -no-window -show-kernel
+        -no-snapshot-save -no-snapshot-load
+        -no-audio -no-boot-anim
+        -gpu swiftshader_indirect
+        -avd "$avd"
+    )
     [[ -n $kernel ]] && args+=(-kernel "$kernel")
     "$EMULATOR" "${args[@]}" >"$logfile" 2>&1 &
     echo $!
