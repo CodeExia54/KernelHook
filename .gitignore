@@ -50,6 +50,8 @@ scripts/*
 !scripts/test_avd_graft.sh
 !scripts/test_avd_path1.sh
 !scripts/test_avd_path2.sh
+!scripts/matrix_acd.sh
+!scripts/matrix_acd_results.md
 !scripts/test_device_kmod.sh
 !scripts/test_device_graft.sh
 !scripts/extract_avd_crcs.py
