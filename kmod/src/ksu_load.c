@@ -30,6 +30,7 @@
 #include "kernelhook/kh_ksu_blob.h"
 #include "kernelhook/kh_ksu_load.h"
 #include "kernelhook/kh_call_init_module.h"
+#include "kernelhook/kh_finalize_kernel.h"
 
 /* fat.ko's pending-blob global; defined in fat_main.c. */
 extern struct kh_pending_blob kh_pending_ksu_blob;
@@ -170,6 +171,18 @@ static void do_load_ksu_now(void)
 	 * returns -EINVAL, we log "kh: load: vm_mmap(payload, ...) failed"
 	 * and bail. The blob is still vfree'd below — same behavior the
 	 * old broken load_module_fn path had on lookup failure. */
+	/* In-kernel finalize: patch __versions CRCs against running
+	 * kernel before handing the bytes back to __do_sys_init_module.
+	 * Userspace tools/kmod_loader does this for fat.ko itself; here
+	 * we run the kernel-side equivalent on the third-party LKM
+	 * (typically KSU) we just ingested. */
+	if (kh_finalize_versions_in_place(kh_pending_ksu_blob.data,
+	                                  kh_pending_ksu_blob.len) != 0) {
+		pr_err("kh: ksu: in-kernel finalize failed; aborting load\n");
+		rc = -22; /* -EINVAL — make goto path symmetrical */
+		goto release_blob;
+	}
+
 	rc = kh_call_init_module(kh_pending_ksu_blob.data,
 	                         kh_pending_ksu_blob.len, "");
 	if (rc < 0)
@@ -177,6 +190,8 @@ static void do_load_ksu_now(void)
 	else
 		pr_info("kh: ksu: loaded\n");
 
+release_blob:
+	(void)rc;
 	/* Free the blob regardless of load outcome. On success the kernel
 	 * has copied the bytes into its own module memory; on failure we
 	 * have nothing to retry with anyway. */
