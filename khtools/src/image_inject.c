@@ -327,6 +327,46 @@ int kh_image_inject(const uint8_t *kernel, size_t kernel_len,
     }
     memcpy(kallsym_kimg, kernel, kernel_len);
 
+    /* 1b. Disable PI_MAP on kernels >= 6.12.23.
+     *
+     * The kernel's __pi_map_kernel uses a CSEL on x20 to select between
+     * two early-boot mapping addresses depending on a feature flag.
+     * KP's tools/patch.c::disable_pi_map (gated on kver > 6.12.23)
+     * forces the unconditional path by hex-patching that 4-byte CSEL
+     * to a MOV. Without this, kernels >= 6.12.23 take a different
+     * mapping path that's incompatible with khimg's paging_init hook.
+     *
+     * The pattern is a 12-byte signature centered on the CSEL:
+     *   E6 03 16 AA  mov x6, x22      (preamble — anchor)
+     *   E7 03 1F 2A  mov w7, wzr      (preamble — anchor)
+     *   34 11 88 9A  csel x20, x9, x8, NE  ← the instruction we replace
+     * with:
+     *   ...                              (preamble unchanged)
+     *   F4 03 09 AA  mov x20, x9      (unconditional select)
+     *
+     * memmem returns NULL on older kernels — no-op. Apply against the
+     * `out` buffer (which we'll fill with `kernel` bytes a few lines
+     * down). Apply on `kallsym_kimg` too so the kallsyms scan sees the
+     * patched bytes if it ever needs to. */
+    {
+        const uint8_t pi_pat[12] = {
+            0xE6, 0x03, 0x16, 0xAA, 0xE7, 0x03, 0x1F, 0x2A,
+            0x34, 0x11, 0x88, 0x9A
+        };
+        const uint8_t pi_rep[12] = {
+            0xE6, 0x03, 0x16, 0xAA, 0xE7, 0x03, 0x1F, 0x2A,
+            0xF4, 0x03, 0x09, 0xAA
+        };
+        uint8_t *hit = (uint8_t *)memmem(kallsym_kimg, kernel_len,
+                                          pi_pat, sizeof(pi_pat));
+        if (hit) {
+            memcpy(hit, pi_rep, sizeof(pi_rep));
+            fprintf(stderr,
+                    "kh: image_inject: disabled __pi_map_kernel CSEL at +%zu\n",
+                    (size_t)(hit - kallsym_kimg));
+        }
+    }
+
     kallsym_t info = {0};
     if (analyze_kallsym_info(&info, (char *)kallsym_kimg,
                              (int32_t)kernel_len, ARM64, 1) != 0) {
@@ -384,7 +424,28 @@ int kh_image_inject(const uint8_t *kernel, size_t kernel_len,
         return -1;
     }
     size_t total_len = align_kimg_len + khimg_len + blob_len;
-    int32_t start_offset = (int32_t)(align_kimg_len + 0x1000);
+
+    /* B insn target — where setup_entry lives at runtime. khimg.bin's
+     * setup_entry sits 4K into the embedded blob (per khimg.lds layout
+     * which puts .setup.data + .setup.text starting at _link_base, and
+     * setup_entry at _setup_start + 4K). */
+    int32_t text_offset = (int32_t)(align_kimg_len + 0x1000);
+
+    /* setup_preset.start_offset — DIFFERENT from text_offset. This is
+     * where setup_entry will COPY khimg+blob to (rmemcpy32 in setup1.S
+     * line ~146-152) before paging_init relocates it. Must NOT overlap
+     * the source region (kernel_pa..kernel_pa+total_len), or we copy
+     * the running setup_entry onto itself — silent UB / hang.
+     *
+     * KP's strategy (tools/patch.c line ~537-541): default to the
+     * 4K-aligned end of the kernel's reserved memory image
+     * (align_kernel_size); if the patched output (kernel + khimg + blob)
+     * already extends past that, bump to 4K-aligned end of the patched
+     * output instead. */
+    size_t align_kernel_size = ((size_t)kinfo.kernel_size + 0xFFFu) & ~(size_t)0xFFFu;
+    int32_t start_offset = (int32_t)align_kernel_size;
+    if ((size_t)start_offset < total_len)
+        start_offset = (int32_t)((total_len + 0xFFFu) & ~(size_t)0xFFFu);
 
     uint8_t *out = (uint8_t *)malloc(total_len);
     if (!out) {
@@ -445,18 +506,26 @@ int kh_image_inject(const uint8_t *kernel, size_t kernel_len,
     /* header_backup — first 8 bytes of original kernel header. */
     memcpy(out + preset_base + KH_OFF_header_backup, kernel, HDR_BACKUP_SIZE);
 
-    /* 9. Redirect the kernel boot B to khimg's setup_entry. */
+    /* 9. Redirect the kernel boot B to khimg's setup_entry (at
+     * text_offset, not start_offset — see comment near start_offset
+     * computation above). */
     if (kh_arm64_b((uint32_t *)(out + kinfo.b_stext_insn_offset),
                    (uint64_t)kinfo.b_stext_insn_offset,
-                   (uint64_t)start_offset) != 4) {
+                   (uint64_t)text_offset) != 4) {
         fprintf(stderr, "kh: image_inject: B encode out of range\n");
         free(out);
         free(kallsym_kimg);
         return -1;
     }
 
-    /* 10. Update kernel header kernel_size_le to reflect total payload. */
-    kh_kernel_resize(out, total_len, (int64_t)total_len);
+    /* 10. Do NOT mutate kernel_size_le. KP's tools/patch.c leaves it
+     * untouched — the field is the kernel's own "image size" hint and
+     * extending it past the original makes some bootloaders allocate
+     * less reserved memory than the kernel actually wants. The
+     * appended kpimg + blob lives BEYOND image_size by design;
+     * setup_entry's start_offset / extra_size machinery is what
+     * actually moves it into a runtime-mapped region. */
+    (void)total_len; /* still the malloc'd output size, used by caller */
 
     free(kallsym_kimg);
     *out_buf = out;
