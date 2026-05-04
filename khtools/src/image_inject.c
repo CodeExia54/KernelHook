@@ -455,6 +455,30 @@ int kh_image_inject(const uint8_t *kernel, size_t kernel_len,
     }
     /* Original kernel bytes (untouched by NOP). */
     memcpy(out, kernel, kernel_len);
+
+    /* Apply the disable_pi_map hex patch to `out` too — kallsym_kimg
+     * gets it earlier (line 1b above) so the kallsyms scan sees the
+     * patched bytes, but the runtime kernel reads from `out` and the
+     * PAC-sync block below only copies the tcp_init_sock window. The
+     * PI_MAP CSEL slot is OUTSIDE that window, so we must re-apply
+     * the same hex patch to `out` here.
+     *
+     * See commit 24228b1 for the pattern/replacement rationale. */
+    {
+        const uint8_t pi_pat[12] = {
+            0xE6, 0x03, 0x16, 0xAA, 0xE7, 0x03, 0x1F, 0x2A,
+            0x34, 0x11, 0x88, 0x9A
+        };
+        const uint8_t pi_rep[12] = {
+            0xE6, 0x03, 0x16, 0xAA, 0xE7, 0x03, 0x1F, 0x2A,
+            0xF4, 0x03, 0x09, 0xAA
+        };
+        uint8_t *hit = (uint8_t *)memmem(out, kernel_len,
+                                          pi_pat, sizeof(pi_pat));
+        if (hit) {
+            memcpy(hit, pi_rep, sizeof(pi_rep));
+        }
+    }
     /* 4K alignment pad. */
     if (align_kimg_len > kernel_len) {
         memset(out + kernel_len, 0, align_kimg_len - kernel_len);
