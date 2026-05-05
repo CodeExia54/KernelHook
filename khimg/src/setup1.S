@@ -8,6 +8,51 @@
 #include <setup.h>
 #include <start.h>
 
+#ifdef KH_UART_DEBUG
+/* Write a single ASCII byte to the QEMU ranchu PL011 UART (PA 0x09000000).
+ * Clobbers x28/x29 (both caller-save). MMU is OFF when these are used.
+ *
+ * NOTE: only safe before the first BL from setup_entry — after the kernel
+ * boots, x28/x29 may be in use. */
+.macro KH_UART_PUT ch
+    mov  x29, #0x09000000
+    mov  w28, #\ch
+    str  w28, [x29]
+.endm
+
+/* Dump 32-bit value in w\wreg as 8 hex nibbles to UART. Clobbers x29
+ * (UART base) + named scratch w-regs (\ws1 the digit holder, \ws2 the
+ * shift counter — both should be w-register names). */
+.macro KH_UART_HEX32 wreg, ws1, ws2
+    mov  x29, #0x09000000
+    mov  \ws2, #28        /* shift counter */
+.Lkhuhx_loop_\@:
+    lsr  \ws1, \wreg, \ws2
+    and  \ws1, \ws1, #0xF
+    cmp  \ws1, #10
+    add  \ws1, \ws1, #'0'
+    b.lt .Lkhuhx_d_\@
+    add  \ws1, \ws1, #('a' - '0' - 10)
+.Lkhuhx_d_\@:
+    str  \ws1, [x29]
+    subs \ws2, \ws2, #4
+    b.ge .Lkhuhx_loop_\@
+.endm
+
+/* Dump 4 bytes at PA \reg as hex via UART. Clobbers x28..x30 + \scratch. */
+.macro KH_UART_DUMP_W4 areg, wscratch
+    ldr  \wscratch, [\areg]
+    KH_UART_HEX32 \wscratch, w28, w30
+.endm
+#else
+.macro KH_UART_PUT ch
+.endm
+.macro KH_UART_HEX32 wreg, ws1, ws2
+.endm
+.macro KH_UART_DUMP_W4 areg, scratch
+.endm
+#endif
+
 .text
 .align 2
 .type memcpy8, %function
@@ -40,6 +85,7 @@ rmemcpy32:
 .align 2
 .type start_prepare, %function
 start_prepare:
+    KH_UART_PUT 'd'
     stp x29, x30, [sp, -16]!
     stp x19, x20, [sp, -16]!
     stp x21, x22, [sp, -16]!
@@ -162,6 +208,7 @@ start_prepare:
 .align 2
 .type map_prepare, %function
 map_prepare:
+    KH_UART_PUT 'm'
     stp x29, x30, [sp, -16]!
     stp x19, x20, [sp, -16]!
     mov x19, x0
@@ -276,6 +323,62 @@ map_prepare:
     add x0, x19, x14
     bl memcpy8
 
+    // Fill map_data.map_backup_va + map_backup_len for asm _paging_init's restore step.
+    //   map_backup_pa  = (PIC adrp+add of start_preset.map_backup, MMU off → PA)
+    //   map_backup_va  = map_backup_pa - kernel_pa + kernel_VA_base   (= ... but kernel_VA_base
+    //                    not known yet — store the runtime kernel image VA via kimage_voffset
+    //                    once paging_init runs. Actually simpler: save the LINK-OFFSET-based
+    //                    runtime VA. Let _paging_init.S add kernel_VA_base at runtime.)
+    //
+    // We save `map_backup_image_offset` (= PA - kernel_pa) into map_backup_va field. asm
+    // _paging_init then computes runtime VA = (map_backup_image_offset) + (kernel_VA_base).
+    //
+    // Recompute x9 = map_data ptr (lost over memcpy8 args), x10 = setup_preset (link).
+    adrp x9, map_data
+    add x9, x9, :lo12:map_data
+    adrp x11, start_preset
+    add x11, x11, :lo12:start_preset
+    add x11, x11, #start_map_backup_offset      // x11 = PIC PA of start_preset.map_backup
+    sub x11, x11, x19                           // x11 = PA - kernel_pa = image-relative offset
+    str x11, [x9, #map_backup_va_offset]
+    adrp x10, _map_end
+    add x10, x10, :lo12:_map_end
+    adrp x11, _map_start
+    add x11, x11, :lo12:_map_start
+    sub x10, x10, x11                           // x10 = _map_end - _map_start
+    str x10, [x9, #map_backup_len_offset]
+
+#ifdef KH_UART_DEBUG
+    /* DEBUG: dump trampoline byte at paging_init_pa + first 4 bytes at
+     * trampoline target. Confirms map_prepare actually installed B insn
+     * AND _paging_init was copied to runtime location. We're still in
+     * setup phase (MMU off), so PA UART writes work.
+     *
+     * Recompute paging_init_pa = kernel_pa + setup_preset.paging_init_offset
+     * (we lost x13 across memcpy8 args; x19=kernel_pa preserved). */
+    KH_UART_PUT 'T'
+    adrp x10, setup_preset
+    add x10, x10, :lo12:setup_preset
+    ldr x11, [x10, #setup_paging_init_offset_offset]
+    add x12, x19, x11           /* x12 = kernel_pa + paging_init_offset */
+    ldr w11, [x12]              /* w11 = trampoline insn */
+    KH_UART_HEX32 w11, w28, w30
+    KH_UART_PUT '@'
+    /* Dump trampoline target first 4 bytes:
+     * target = kernel_pa + map_offset + (_paging_init - _map_start) */
+    adrp x11, _paging_init
+    add x11, x11, :lo12:_paging_init
+    adrp x12, _map_start
+    add x12, x12, :lo12:_map_start
+    sub x11, x11, x12           /* x11 = _paging_init - _map_start */
+    ldr x12, [x10, #setup_map_offset_offset]
+    add x11, x11, x12           /* x11 += map_offset */
+    add x11, x11, x19           /* x11 = trampoline target PA */
+    ldr w12, [x11]              /* w12 = first 4 bytes of relocated _paging_init */
+    KH_UART_HEX32 w12, w28, w30
+    KH_UART_PUT '\n'
+#endif
+
     // Restore
     ldp x19, x20, [sp], 16
     ldp x29, x30, [sp], 16
@@ -287,6 +390,7 @@ map_prepare:
 .align 2
 .type setup, %function
 setup:
+    KH_UART_PUT 'C'
     // Save
     stp x29, x30, [sp, -16]!
     stp x0, x1, [sp, -16]!
@@ -314,10 +418,13 @@ setup:
     sub x12, x9, x11
     mov x19, x12
 
+    KH_UART_PUT 'D'
     mov x0, x19
     bl start_prepare
+    KH_UART_PUT 'E'
     mov x0, x19
     bl map_prepare
+    KH_UART_PUT 'F'
 
     // memcpy(kernel_pa, (uint64_t)setup_preset.header_backup, sizeof(setup_preset.header_backup));
     mov x0, x19
@@ -325,12 +432,14 @@ setup:
     mov x2, #HDR_BACKUP_SIZE
     bl memcpy8
 
+    KH_UART_PUT 'G'
     // I-cache = on or off,
     dsb ish
     ic iallu
     dsb ish
     isb
 
+    KH_UART_PUT 'H'
     mov x16, x19
 
     // Restore
@@ -349,6 +458,8 @@ setup:
     // Restore sp
     ldp x9, x10, [sp], 16
     mov sp, x9
+    KH_UART_PUT 'I'
+    KH_UART_PUT '\n'
     // _head
     br x16
 
@@ -357,6 +468,7 @@ setup:
 .global setup_entry
 .type entry, %function
 setup_entry:
+    KH_UART_PUT 'A'
     // x0 = physical address to the FDT blob.
     // Preserve the arguments passed by the bootloader in x0 .. x3
     mov x9, sp
@@ -364,7 +476,8 @@ setup_entry:
     add x11, x11, :lo12:stack
     add x11, x11, STACK_SIZE
     mov sp, x11
-    stp x9, x10, [sp, -16]! 
+    stp x9, x10, [sp, -16]!
+    KH_UART_PUT 'B'
     b setup
 
 #undef __ASSEMBLY__

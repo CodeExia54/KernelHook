@@ -52,6 +52,49 @@ int khimg_main(uint64_t kimage_voffset, uint64_t linear_voffset,
         printk = (printk_f)kallsyms_lookup_name("_printk");
     }
 
+    /* Restore the kernel function (tcp_init_sock and successors)
+     * whose .text region was overwritten by setup1.S::map_prepare
+     * with our relocated .setup.map (containing _paging_init).
+     * Without this, the first kernel caller of tcp_init_sock —
+     * usually inet6_create() at first socket() — executes our asm
+     * bytes and faults on undefined instruction.
+     *
+     * The original bytes were saved into start_preset.map_backup
+     * during setup_entry phase by setup1.S::start_prepare. Now that
+     * khimg has been relocated to the new vmalloc range and we hold
+     * `preset`, we have the saved bytes in &preset->map_backup. */
+    if (preset->map_backup_len > 0 && preset->map_backup_len <= MAP_MAX_SIZE) {
+        uint8_t *dst = (uint8_t *)(uintptr_t)(kernel_va + preset->map_offset);
+        uint8_t *src = preset->map_backup;
+        for (int64_t i = 0; i < preset->map_backup_len; i++) {
+            dst[i] = src[i];
+        }
+        /* Flush icache for the restored range. Use kallsyms-resolved
+         * flush_icache_range; if missing, fall back to inline DSB+IC IS. */
+        typedef void (*flush_icache_range_f)(unsigned long start,
+                                             unsigned long end);
+        flush_icache_range_f flush_icache_range =
+            (flush_icache_range_f)kallsyms_lookup_name("flush_icache_range");
+        if (!flush_icache_range)
+            flush_icache_range = (flush_icache_range_f)
+                kallsyms_lookup_name("__flush_icache_range");
+        if (flush_icache_range) {
+            flush_icache_range((unsigned long)dst,
+                               (unsigned long)dst + preset->map_backup_len);
+        } else {
+            __asm__ volatile("dsb ish; ic ialluis; dsb ish; isb"
+                             ::: "memory");
+        }
+        if (printk)
+            printk("kh: khimg: restored %lld bytes of kernel .text at %p (map_offset=%llx)\n",
+                   (long long)preset->map_backup_len, dst,
+                   (unsigned long long)preset->map_offset);
+    } else {
+        if (printk)
+            printk("kh: khimg: skipping map_backup restore (len=%lld out of range)\n",
+                   (long long)preset->map_backup_len);
+    }
+
     /* Locate the trailing kh_blob_table_v1. setup.h forward-declares
      * _kp_end as a function symbol; cast its address to a byte pointer. */
     uint8_t *blob_bytes = (uint8_t *)(uintptr_t)&_kp_end;

@@ -44,6 +44,8 @@ SECTIONS
         src/map.o(.map.text)
         src/map.o(.text)
         src/map1.o(.text)
+        src/paging_init.o(.map.text)
+        src/paging_init.o(.text)
         . = ALIGN(16);
         _map_end = .;
     }

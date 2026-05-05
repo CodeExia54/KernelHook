@@ -47,6 +47,12 @@ typedef struct
     int64_t page_shift;
     uint64_t kimage_voffset;
     uint64_t linear_voffset;
+    /* New fields used by hand-written paging_init.S:
+     *   map_backup_va  — runtime kernel VA of start_preset.map_backup
+     *                    (computed at setup time from PIC adrp + kimage_voffset)
+     * setup1.S::map_prepare fills these. */
+    uint64_t map_backup_va;
+    uint64_t map_backup_len;
 } map_data_t;
 #else
 #define map_paging_init_backup_offset 0
@@ -64,7 +70,15 @@ typedef struct
 #define map_tmp0_offset (map_printk_relo_offset + 8)
 #define map_tmp1_offset (map_tmp0_offset + 8)
 #define map_str_fmt_px_offset (map_tmp1_offset + 8)
+#define map_va1_bits_offset (map_str_fmt_px_offset + 24)
+#else
+#define map_va1_bits_offset (map_map_symbol_offset + MAP_SYMBOL_SIZE)
 #endif // MAP_DEBUG
+#define map_page_shift_offset (map_va1_bits_offset + 8)
+#define map_kimage_voffset_offset (map_page_shift_offset + 8)
+#define map_linear_voffset_offset (map_kimage_voffset_offset + 8)
+#define map_backup_va_offset (map_linear_voffset_offset + 8)
+#define map_backup_len_offset (map_backup_va_offset + 8)
 #endif
 
 #ifndef __ASSEMBLY__
