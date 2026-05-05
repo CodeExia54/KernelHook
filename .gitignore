@@ -23,9 +23,10 @@ tools/kmod_loader/test_resolver
 !tools/kmod_loader/README.md
 !tools/kmod_loader/graft_vendor_ko.c
 
-# IDE
+# IDE / LSP caches
 .vscode/
 .idea/
+.cache/
 *.swp
 *.swo
 *~
@@ -75,6 +76,9 @@ bazel/kernel_build/clangdir.txt
 # OS
 .DS_Store
 Thumbs.db
+
+# External reference sources (KernelPatch / KernelSU etc., kept on local disk only)
+third_party/
 
 # local-only: followup tracking docs (deliberately not in repo)
 docs/followups/
