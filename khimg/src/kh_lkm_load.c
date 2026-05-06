@@ -118,6 +118,14 @@ struct kh_lkm_state {
 
 	volatile uint8_t       armed;
 
+	/* Deferred map_backup restore. khimg_main can't restore at boot —
+	 * paging_init.S itself lives at map_va and we'd corrupt its return
+	 * path. We restore on the first hook fire instead, before the
+	 * deferred init_module load runs. */
+	unsigned long          map_restore_dst;
+	const uint8_t         *map_restore_src;
+	unsigned long          map_restore_len;
+
 	/* Shadow slot: 4 original insns (PACIASP→BTI C if needed) + abs
 	 * jump back to target+16. 16-byte aligned for icache cleanliness. */
 	uint32_t shadow_slot[ABS_BRANCH_INSN_NUM + ABS_BRANCH_INSN_NUM]
@@ -247,9 +255,57 @@ static void kh_lkm_disarm_trampoline(void)
 		kh_lkm.printk("kh: lkm: trampoline disarmed at %lx\n", target);
 }
 
+/* Public setter — khimg_main fills these so we can restore on first
+ * hook fire (kernel boot is well past paging_init by then). */
+void kh_lkm_set_map_restore(unsigned long dst_va,
+                            const uint8_t *src_bytes,
+                            unsigned long len)
+{
+	kh_lkm.map_restore_dst = dst_va;
+	kh_lkm.map_restore_src = src_bytes;
+	kh_lkm.map_restore_len = len;
+}
+
+/* Restore the splatted .setup.map area back to its original kernel
+ * bytes. Called from the hook handler on first fire — paging_init has
+ * long since returned, but no caller has touched tcp_init_sock yet
+ * (first socket() lands a few seconds after first finit_module). */
+static void kh_lkm_run_map_restore(void)
+{
+	unsigned long dst_va = kh_lkm.map_restore_dst;
+	const uint8_t *src   = kh_lkm.map_restore_src;
+	unsigned long len    = kh_lkm.map_restore_len;
+	if (!dst_va || !src || len == 0) return;
+
+	/* Volatile + per-iteration preset deref defeats clang's memcpy
+	 * idiom recognition (no libc memcpy in this freestanding binary). */
+	volatile uint8_t *dst = (volatile uint8_t *)(uintptr_t)dst_va;
+	for (unsigned long i = 0; i < len; i++) {
+		dst[i] = src[i];
+	}
+
+	if (kh_lkm.flush_icache_range) {
+		kh_lkm.flush_icache_range(dst_va, dst_va + len);
+	} else {
+		__asm__ volatile("dsb ish; ic ialluis; dsb ish; isb"
+		                 ::: "memory");
+	}
+
+	if (kh_lkm.printk)
+		kh_lkm.printk("kh: lkm: restored %lu map_backup bytes at %lx\n",
+		              len, dst_va);
+
+	/* One-shot: clear so we don't redo on later hook fires (we disarm
+	 * the trampoline anyway, but defense-in-depth). */
+	kh_lkm.map_restore_dst = 0;
+}
+
 unsigned long kh_lkm_hook_handler(void)
 {
 	if (!kh_lkm_try_arm()) {
+		/* Restore tcp_init_sock area BEFORE doing anything else. The
+		 * first socket() in userspace boot will hit it within seconds. */
+		kh_lkm_run_map_restore();
 		kh_lkm_do_load();
 		/* After first fire, restore target's original 4 insns so
 		 * subsequent syscalls don't traverse our trampoline /
